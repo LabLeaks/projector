@@ -1,0 +1,46 @@
+{
+  "archives": [
+    "projector-cli-aarch64-apple-darwin.tar.xz",
+    "projector-cli-aarch64-unknown-linux-gnu.tar.xz",
+    "projector-cli-x86_64-apple-darwin.tar.xz",
+    "projector-cli-x86_64-pc-windows-msvc.zip",
+    "projector-cli-x86_64-unknown-linux-gnu.tar.xz",
+    "projector-server-aarch64-apple-darwin.tar.xz",
+    "projector-server-aarch64-unknown-linux-gnu.tar.xz",
+    "projector-server-x86_64-apple-darwin.tar.xz",
+    "projector-server-x86_64-pc-windows-msvc.zip",
+    "projector-server-x86_64-unknown-linux-gnu.tar.xz"
+  ],
+  "github_release_assets": [
+    "dist-manifest.json",
+    "projector-cli-aarch64-apple-darwin.tar.xz",
+    "projector-cli-aarch64-apple-darwin.tar.xz.sha256",
+    "projector-cli-aarch64-unknown-linux-gnu.tar.xz",
+    "projector-cli-aarch64-unknown-linux-gnu.tar.xz.sha256",
+    "projector-cli-x86_64-apple-darwin.tar.xz",
+    "projector-cli-x86_64-apple-darwin.tar.xz.sha256",
+    "projector-cli-x86_64-pc-windows-msvc.zip",
+    "projector-cli-x86_64-pc-windows-msvc.zip.sha256",
+    "projector-cli-x86_64-unknown-linux-gnu.tar.xz",
+    "projector-cli-x86_64-unknown-linux-gnu.tar.xz.sha256",
+    "projector-server-aarch64-apple-darwin.tar.xz",
+    "projector-server-aarch64-apple-darwin.tar.xz.sha256",
+    "projector-server-aarch64-unknown-linux-gnu.tar.xz",
+    "projector-server-aarch64-unknown-linux-gnu.tar.xz.sha256",
+    "projector-server-x86_64-apple-darwin.tar.xz",
+    "projector-server-x86_64-apple-darwin.tar.xz.sha256",
+    "projector-server-x86_64-pc-windows-msvc.zip",
+    "projector-server-x86_64-pc-windows-msvc.zip.sha256",
+    "projector-server-x86_64-unknown-linux-gnu.tar.xz",
+    "projector-server-x86_64-unknown-linux-gnu.tar.xz.sha256",
+    "sha256.sum",
+    "source.tar.gz",
+    "source.tar.gz.sha256"
+  ],
+  "homebrew_formula_archives": [
+    "projector-cli-aarch64-apple-darwin.tar.xz",
+    "projector-cli-aarch64-unknown-linux-gnu.tar.xz",
+    "projector-cli-x86_64-apple-darwin.tar.xz",
+    "projector-cli-x86_64-unknown-linux-gnu.tar.xz"
+  ]
+}

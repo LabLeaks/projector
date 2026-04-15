@@ -1,0 +1,6 @@
+_project/
+AGENTS.md
+.projector/
+target/
+__pycache__/
+*.pyc

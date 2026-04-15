@@ -1,0 +1,18 @@
+[workspace]
+members = [
+  "src/cli",
+  "src/domain",
+  "src/runtime",
+  "src/server",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "UNLICENSED"
+repository = "https://github.com/LabLeaks/projector"
+publish = false
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

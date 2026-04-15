@@ -1,0 +1,15 @@
+[workspace]
+members = ["cargo:src/cli", "cargo:src/server"]
+
+[dist]
+cargo-dist-version = "0.31.0"
+ci = "github"
+installers = []
+targets = [
+  "aarch64-apple-darwin",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+  "x86_64-unknown-linux-gnu",
+]
+hosting = "github"
