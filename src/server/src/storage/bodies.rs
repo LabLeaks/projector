@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::{
-    BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState,
-    ProvenanceEvent, ProvenanceEventKind, RestoreDocumentBodyRevisionRequest,
-    UpdateDocumentRequest,
+    BootstrapSnapshot, DocumentId, DocumentKind, ManifestState, ProvenanceEvent,
+    ProvenanceEventKind, RestoreDocumentBodyRevisionRequest, UpdateDocumentRequest,
 };
 
 use super::body_state::{
@@ -22,7 +21,7 @@ use super::body_persistence::{
     AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
 };
 use super::StoreError;
-use super::history::{file_read_body_revisions};
+use super::history::file_read_body_revisions;
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;
 
@@ -468,42 +467,6 @@ pub(crate) fn snapshot_subset_for_documents(
         manifest: ManifestState { entries: manifest },
         bodies,
     }
-}
-
-pub(crate) fn snapshot_from_rows<F>(
-    rows: Vec<tokio_postgres::Row>,
-    parse_kind: F,
-) -> Result<BootstrapSnapshot, StoreError>
-where
-    F: Fn(&str) -> Result<DocumentKind, StoreError>,
-{
-    let mut snapshot = BootstrapSnapshot {
-        manifest: ManifestState {
-            entries: Vec::new(),
-        },
-        bodies: Vec::new(),
-    };
-
-    for row in rows {
-        let document_id = DocumentId::new(row.get::<_, String>("document_id"));
-        let deleted = row.get::<_, bool>("deleted");
-        let kind = parse_kind(&row.get::<_, String>("kind"))?;
-        snapshot.manifest.entries.push(ManifestEntry {
-            document_id: document_id.clone(),
-            mount_relative_path: PathBuf::from(row.get::<_, String>("mount_path")),
-            relative_path: PathBuf::from(row.get::<_, String>("relative_path")),
-            kind,
-            deleted,
-        });
-        if !deleted {
-            snapshot.bodies.push(
-                FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text"))
-                    .into_document_body(document_id),
-            );
-        }
-    }
-
-    Ok(snapshot)
 }
 
 fn now_ms() -> u128 {

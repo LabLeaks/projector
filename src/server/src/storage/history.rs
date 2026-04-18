@@ -13,6 +13,7 @@ use tokio_postgres::Client;
 use super::body_persistence::{
     AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
 };
+use super::body_projection::{snapshot_from_current_rows, snapshot_from_manifest_entries};
 use super::body_state::{
     BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryPayload,
 };
@@ -314,25 +315,11 @@ pub(crate) fn file_reconstruct_workspace_at_cursor(
             .then_with(|| left.document_id.as_str().cmp(right.document_id.as_str()))
     });
 
-    let mut bodies = entries
-        .iter()
-        .filter(|entry| !entry.deleted)
-        .filter_map(|entry| {
-            latest_bodies
-                .get(entry.document_id.as_str())
-                .map(|revision| {
-                    revision
-                        .materialized_body_state()
-                        .into_document_body(entry.document_id.clone())
-                })
-        })
-        .collect::<Vec<_>>();
-    bodies.sort_by(|left, right| left.document_id.as_str().cmp(right.document_id.as_str()));
-
-    Ok(BootstrapSnapshot {
-        manifest: ManifestState { entries },
-        bodies,
-    })
+    Ok(snapshot_from_manifest_entries(entries, |document_id| {
+        latest_bodies
+            .get(document_id.as_str())
+            .map(|revision| revision.materialized_body_state())
+    }))
 }
 
 pub(crate) fn file_restore_workspace_at_cursor(
@@ -624,24 +611,11 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
             .then_with(|| left.document_id.as_str().cmp(right.document_id.as_str()))
     });
 
-    let mut bodies = entries
-        .iter()
-        .filter(|entry| !entry.deleted)
-        .filter_map(|entry| {
-            body_map
-                .get(entry.document_id.as_str())
-                .map(|text| {
-                    FULL_TEXT_BODY_MODEL.state_from_materialized_text(text.clone())
-                        .into_document_body(entry.document_id.clone())
-                })
-        })
-        .collect::<Vec<_>>();
-    bodies.sort_by(|left, right| left.document_id.as_str().cmp(right.document_id.as_str()));
-
-    Ok(BootstrapSnapshot {
-        manifest: ManifestState { entries },
-        bodies,
-    })
+    Ok(snapshot_from_manifest_entries(entries, |document_id| {
+        body_map
+            .get(document_id.as_str())
+            .map(|text| FULL_TEXT_BODY_MODEL.state_from_materialized_text(text.clone()))
+    }))
 }
 
 pub(crate) async fn postgres_restore_workspace_at_cursor(
@@ -798,30 +772,7 @@ async fn postgres_current_workspace_snapshot(
             &[&workspace_id],
         )
         .await?;
-    let mut snapshot = BootstrapSnapshot {
-        manifest: ManifestState {
-            entries: Vec::new(),
-        },
-        bodies: Vec::new(),
-    };
-    for row in rows {
-        let document_id = DocumentId::new(row.get::<_, String>("document_id"));
-        let deleted = row.get::<_, bool>("deleted");
-        snapshot.manifest.entries.push(ManifestEntry {
-            document_id: document_id.clone(),
-            mount_relative_path: row.get::<_, String>("mount_path").into(),
-            relative_path: row.get::<_, String>("relative_path").into(),
-            kind: DocumentKind::Text,
-            deleted,
-        });
-        if !deleted {
-            snapshot.bodies.push(
-                FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text"))
-                    .into_document_body(document_id),
-            );
-        }
-    }
-    Ok(snapshot)
+    snapshot_from_current_rows(rows, |_| Ok(DocumentKind::Text))
 }
 
 #[derive(Clone)]

@@ -9,6 +9,7 @@ use projector_domain::{
     BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState,
 };
 
+use crate::storage::body_projection::snapshot_from_manifest_entries;
 use crate::storage::sqlite::history::{read_body_revisions, read_path_history};
 use crate::storage::sqlite::state::effective_workspace_cursor;
 use crate::storage::{StoreError, history::FileBodyRevision, history::FilePathRevision};
@@ -41,25 +42,11 @@ pub(super) fn reconstruct_workspace_at_cursor(
             .then_with(|| left.document_id.as_str().cmp(right.document_id.as_str()))
     });
 
-    let mut bodies = entries
-        .iter()
-        .filter(|entry| !entry.deleted)
-        .filter_map(|entry| {
-            latest_bodies
-                .get(entry.document_id.as_str())
-                .map(|revision| {
-                    revision
-                        .materialized_body_state()
-                        .into_document_body(entry.document_id.clone())
-                })
-        })
-        .collect::<Vec<_>>();
-    bodies.sort_by(|left, right| left.document_id.as_str().cmp(right.document_id.as_str()));
-
-    Ok(BootstrapSnapshot {
-        manifest: ManifestState { entries },
-        bodies,
-    })
+    Ok(snapshot_from_manifest_entries(entries, |document_id| {
+        latest_bodies
+            .get(document_id.as_str())
+            .map(|revision| revision.materialized_body_state())
+    }))
 }
 
 pub(super) fn build_restored_live_workspace_snapshot(

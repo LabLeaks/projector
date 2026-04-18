@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use projector_domain::{BootstrapSnapshot, DocumentId, SyncEntryKind};
 
 use crate::storage::StoreError;
-use crate::storage::bodies::{parse_document_kind, snapshot_from_rows};
+use crate::storage::body_projection::snapshot_from_current_rows;
+use crate::storage::bodies::parse_document_kind;
 use crate::storage::provenance::current_workspace_cursor_tx;
 
 use super::super::normalize_mounts;
@@ -85,7 +86,7 @@ pub(crate) async fn postgres_bootstrap_workspace(
         .await?;
 
     let cursor = current_workspace_cursor_tx(transaction, workspace_id).await?;
-    let snapshot = snapshot_from_rows(rows, parse_document_kind)?;
+    let snapshot = snapshot_from_current_rows(rows, parse_document_kind)?;
     Ok((snapshot, cursor))
 }
 
@@ -138,7 +139,7 @@ pub(crate) async fn postgres_changes_since(
             .await?
     };
 
-    Ok((snapshot_from_rows(rows, parse_document_kind)?, cursor))
+    Ok((snapshot_from_current_rows(rows, parse_document_kind)?, cursor))
 }
 
 fn format_sync_entry_kind(kind: &SyncEntryKind) -> &'static str {
