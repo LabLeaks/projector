@@ -52,7 +52,7 @@ where
     F: Fn(&str) -> Result<DocumentKind, StoreError>,
 {
     let mut entries = Vec::new();
-    let mut body_rows = Vec::<(DocumentId, (CanonicalBodyStateKind, String))>::new();
+    let mut body_rows = Vec::<(DocumentId, CanonicalBodyState)>::new();
 
     for row in rows {
         let document_id = DocumentId::new(row.get::<_, String>("document_id"));
@@ -66,13 +66,14 @@ where
             deleted,
         });
         if !deleted {
+            let state_kind =
+                CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
+                    .map_err(StoreError::new)?;
             body_rows.push((
                 document_id,
-                (
-                    CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
-                        .map_err(StoreError::new)?,
-                    row.get::<_, String>("body_text"),
-                ),
+                FULL_TEXT_BODY_MODEL
+                    .state_from_storage_record(state_kind, row.get::<_, String>("body_text"))
+                    .map_err(StoreError::new)?,
             ));
         }
     }
@@ -81,8 +82,6 @@ where
         .into_iter()
         .collect::<std::collections::HashMap<_, _>>();
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
-        body_map
-            .get(document_id)
-            .map(|(kind, text)| FULL_TEXT_BODY_MODEL.state_from_storage_record(*kind, text.clone()))
+        body_map.get(document_id).cloned()
     }))
 }

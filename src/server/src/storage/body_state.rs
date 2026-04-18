@@ -14,11 +14,15 @@ use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact, Update};
 pub(crate) trait BodyStateModel {
     fn empty_state(&self) -> CanonicalBodyState;
     fn state_from_materialized_text(&self, text: impl Into<String>) -> CanonicalBodyState;
+    fn state_from_yrs_checkpoint(
+        &self,
+        checkpoint: YrsTextCheckpoint,
+    ) -> Result<CanonicalBodyState, String>;
     fn state_from_storage_record(
         &self,
         kind: CanonicalBodyStateKind,
-        materialized_text: impl Into<String>,
-    ) -> CanonicalBodyState;
+        storage_payload: impl Into<String>,
+    ) -> Result<CanonicalBodyState, String>;
     fn history_from_stored_revision(
         &self,
         base_text: impl Into<String>,
@@ -54,18 +58,21 @@ pub(crate) const FULL_TEXT_BODY_MODEL: FullTextBodyModel = FullTextBodyModel;
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CanonicalBodyStateKind {
     FullTextMergeV1,
+    YrsTextCheckpointV1,
 }
 
 impl CanonicalBodyStateKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::FullTextMergeV1 => "full_text_merge_v1",
+            Self::YrsTextCheckpointV1 => "yrs_text_checkpoint_v1",
         }
     }
 
     pub(crate) fn parse(raw: &str) -> Result<Self, String> {
         match raw {
             "full_text_merge_v1" => Ok(Self::FullTextMergeV1),
+            "yrs_text_checkpoint_v1" => Ok(Self::YrsTextCheckpointV1),
             other => Err(format!("unknown canonical body state kind {other}")),
         }
     }
@@ -74,15 +81,27 @@ impl CanonicalBodyStateKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CanonicalBodyState {
     kind: CanonicalBodyStateKind,
+    storage_payload: String,
     materialized_text: String,
 }
 
 impl CanonicalBodyState {
     fn full_text_merge_v1(text: impl Into<String>) -> Self {
+        let text = text.into();
         Self {
             kind: CanonicalBodyStateKind::FullTextMergeV1,
-            materialized_text: text.into(),
+            storage_payload: text.clone(),
+            materialized_text: text,
         }
+    }
+
+    fn yrs_text_checkpoint_v1(checkpoint: YrsTextCheckpoint) -> Result<Self, String> {
+        let materialized_text = checkpoint.materialized_text()?;
+        Ok(Self {
+            kind: CanonicalBodyStateKind::YrsTextCheckpointV1,
+            storage_payload: encode_hex(checkpoint.checkpoint_bytes()),
+            materialized_text,
+        })
     }
 
     pub(crate) fn kind(&self) -> CanonicalBodyStateKind {
@@ -91,6 +110,10 @@ impl CanonicalBodyState {
 
     pub(crate) fn materialized_text(&self) -> &str {
         &self.materialized_text
+    }
+
+    pub(crate) fn storage_payload(&self) -> &str {
+        &self.storage_payload
     }
 
     pub(crate) fn into_document_body(self, document_id: DocumentId) -> DocumentBody {
@@ -159,6 +182,11 @@ impl YrsTextCheckpoint {
         let checkpoint = Self { merged_update_v1 };
         checkpoint.materialized_text()?;
         Ok(checkpoint)
+    }
+
+    pub(crate) fn from_storage_payload(storage_payload: &str) -> Result<Self, String> {
+        let merged_update_v1 = decode_hex(storage_payload)?;
+        Self::from_checkpoint_bytes(merged_update_v1)
     }
 
     pub(crate) fn checkpoint_bytes(&self) -> &[u8] {
@@ -315,15 +343,26 @@ impl BodyStateModel for FullTextBodyModel {
         CanonicalBodyState::full_text_merge_v1(text)
     }
 
+    fn state_from_yrs_checkpoint(
+        &self,
+        checkpoint: YrsTextCheckpoint,
+    ) -> Result<CanonicalBodyState, String> {
+        CanonicalBodyState::yrs_text_checkpoint_v1(checkpoint)
+    }
+
     fn state_from_storage_record(
         &self,
         kind: CanonicalBodyStateKind,
-        materialized_text: impl Into<String>,
-    ) -> CanonicalBodyState {
+        storage_payload: impl Into<String>,
+    ) -> Result<CanonicalBodyState, String> {
+        let storage_payload = storage_payload.into();
         match kind {
             CanonicalBodyStateKind::FullTextMergeV1 => {
-                self.state_from_materialized_text(materialized_text)
+                Ok(self.state_from_materialized_text(storage_payload))
             }
+            CanonicalBodyStateKind::YrsTextCheckpointV1 => self.state_from_yrs_checkpoint(
+                YrsTextCheckpoint::from_storage_payload(&storage_payload)?,
+            ),
         }
     }
 
@@ -588,11 +627,38 @@ fn ensure_trailing_newline(text: &str) -> String {
     }
 }
 
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut encoded, "{byte:02x}");
+    }
+    encoded
+}
+
+fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
+    if raw.len() % 2 != 0 {
+        return Err("hex payload must have even length".to_owned());
+    }
+    let mut decoded = Vec::with_capacity(raw.len() / 2);
+    let bytes = raw.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let chunk = std::str::from_utf8(&bytes[index..index + 2])
+            .map_err(|err| format!("invalid utf8 in hex payload: {err}"))?;
+        let byte = u8::from_str_radix(chunk, 16)
+            .map_err(|err| format!("invalid hex byte `{chunk}`: {err}"))?;
+        decoded.push(byte);
+        index += 2;
+    }
+    Ok(decoded)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FullTextBodyModel,
-        RetainedBodyHistoryKind, ThreeWayMergeBodyEngine, YrsTextCheckpoint,
+        BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind,
+        FullTextBodyModel, RetainedBodyHistoryKind, ThreeWayMergeBodyEngine, YrsTextCheckpoint,
     };
     use yrs::{GetString, Text, Transact};
 
@@ -736,5 +802,29 @@ mod tests {
         let txn = rebuilt_doc.transact();
 
         assert_eq!(text.get_string(&txn), "rebuilt from checkpoint");
+    }
+
+    #[test]
+    fn yrs_canonical_state_round_trips_through_storage_payload() {
+        let model = FullTextBodyModel;
+        let checkpoint =
+            YrsTextCheckpoint::from_materialized_text("canonical yrs text\n").expect("checkpoint");
+        let state = model
+            .state_from_yrs_checkpoint(checkpoint)
+            .expect("yrs canonical state");
+
+        assert_eq!(state.kind(), CanonicalBodyStateKind::YrsTextCheckpointV1);
+        assert_eq!(state.materialized_text(), "canonical yrs text\n");
+        assert_ne!(state.storage_payload(), "canonical yrs text\n");
+
+        let decoded = model
+            .state_from_storage_record(
+                CanonicalBodyStateKind::YrsTextCheckpointV1,
+                state.storage_payload(),
+            )
+            .expect("decode stored yrs payload");
+        assert_eq!(decoded.kind(), CanonicalBodyStateKind::YrsTextCheckpointV1);
+        assert_eq!(decoded.materialized_text(), "canonical yrs text\n");
+        assert_eq!(decoded.storage_payload(), state.storage_payload());
     }
 }

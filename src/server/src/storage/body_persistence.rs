@@ -171,12 +171,12 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
             )
             .await?
             .map(|row| {
-                let kind = CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
-                    .map_err(StoreError::new)?;
-                Ok::<CanonicalBodyState, StoreError>(FULL_TEXT_BODY_MODEL.state_from_storage_record(
-                    kind,
-                    row.get::<_, String>("body_text"),
-                ))
+                let kind =
+                    CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
+                        .map_err(StoreError::new)?;
+                FULL_TEXT_BODY_MODEL
+                    .state_from_storage_record(kind, row.get::<_, String>("body_text"))
+                    .map_err(StoreError::new)
             })
             .transpose()?
             .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state()))
@@ -197,7 +197,7 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
                     &document_id,
                     &self.workspace_id,
                     &state.kind().as_str(),
-                    &state.materialized_text(),
+                    &state.storage_payload(),
                 ],
             )
             .await?;
