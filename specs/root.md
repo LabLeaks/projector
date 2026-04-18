@@ -1,76 +1,80 @@
-/**
-@group PROJECTOR
+### `@group PROJECTOR`
 projector top-level product contract.
 
-@group PROJECTOR.BINDING
+### `@group PROJECTOR.BINDING`
 Repo-local sync-entry configuration behavior for projector workspaces.
 
-@group PROJECTOR.WORKSPACE
+### `@group PROJECTOR.WORKSPACE`
 Repo-local private workspace projection behavior.
 
-@group PROJECTOR.SYNC
+### `@group PROJECTOR.SYNC`
 Cross-checkout sync behavior for materialized project files.
 
-@group PROJECTOR.PROVENANCE
+### `@group PROJECTOR.PROVENANCE`
 Durable change history behavior for synced workspaces.
 
-@group PROJECTOR.DISTRIBUTION
+### `@group PROJECTOR.DISTRIBUTION`
 Release and installation automation for projector.
 
-@group PROJECTOR.DISTRIBUTION.RELEASE_FLOW
+### `@group PROJECTOR.DISTRIBUTION.RELEASE_FLOW`
 Local release publication workflow behavior.
 
-@group PROJECTOR.DISTRIBUTION.GITHUB_RELEASES
+### `@group PROJECTOR.DISTRIBUTION.GITHUB_RELEASES`
 GitHub release automation behavior.
 
-@group PROJECTOR.DISTRIBUTION.HOMEBREW
+### `@group PROJECTOR.DISTRIBUTION.HOMEBREW`
 Homebrew distribution automation behavior.
 
-@group PROJECTOR.SERVER
+### `@group PROJECTOR.SERVER`
 Server-side workspace state and sync behavior.
 
-@group PROJECTOR.SERVER.AUTH
+### `@group PROJECTOR.SERVER.AUTH`
 Server-side identity and authorization behavior.
 
-@group PROJECTOR.SERVER.HOSTING
+### `@group PROJECTOR.SERVER.HOSTING`
 Single-user server hosting model for projector.
 
-@group PROJECTOR.SERVER.DOCUMENTS
+### `@group PROJECTOR.SERVER.DOCUMENTS`
 Server-side document lifecycle behavior.
 
-@group PROJECTOR.CLI
+### `@group PROJECTOR.CLI`
 User-visible command surfaces for operating projector.
 
-@group PROJECTOR.CLI.SYNC
+### `@group PROJECTOR.CLI.SYNC`
 Machine-global sync daemon lifecycle behavior.
 
-@group PROJECTOR.CLI.CONNECT
+### `@group PROJECTOR.CLI.CONNECT`
 Global server-profile management behavior.
 
-@group PROJECTOR.CLI.DEPLOY
+### `@group PROJECTOR.CLI.DEPLOY`
 Remote self-host provisioning behavior.
 
-@group PROJECTOR.CLI.GET
+### `@group PROJECTOR.CLI.GET`
 Remote sync-entry discovery and materialization behavior.
 
-@group PROJECTOR.CLI.HISTORY
+### `@group PROJECTOR.CLI.HISTORY`
 CLI history command behavior.
 
-@group PROJECTOR.CLI.STATUS
+### `@group PROJECTOR.CLI.STATUS`
 Status command behavior.
 
-@group PROJECTOR.CLI.LOG
+### `@group PROJECTOR.CLI.LOG`
 Log command behavior.
 
-@group PROJECTOR.HISTORY
+### `@group PROJECTOR.CLI.DISCONNECT`
+Machine-global server profile removal behavior.
+
+### `@group PROJECTOR.CLI.DOCTOR`
+Explicit setup and diagnostics behavior for projector.
+
+### `@group PROJECTOR.HISTORY`
 Durable document and workspace history behavior outside VCS.
 
-@group PROJECTOR.SERVER.HISTORY
+### `@group PROJECTOR.SERVER.HISTORY`
 Server-side history read and restore behavior.
 
-@group PROJECTOR.SERVER.SYNC
+### `@group PROJECTOR.SERVER.SYNC`
 Server-side sync read behavior.
 
-@group PROJECTOR.SERVER.SYNC_ENTRIES
+### `@group PROJECTOR.SERVER.SYNC_ENTRIES`
 Server-side sync-entry discovery and attachment behavior.
-*/

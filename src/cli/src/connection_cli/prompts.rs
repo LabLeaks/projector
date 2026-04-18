@@ -163,7 +163,6 @@ mod tests {
     use crate::connection_cli::args::DeployArgs;
 
     #[test]
-    // @verifies PROJECTOR.SERVER.HOSTING.SQLITE_DEFAULT
     fn deploy_defaults_choose_sqlite_for_byo_remote_setup() {
         let args = DeployArgs {
             profile_id: Some("homebox".to_owned()),

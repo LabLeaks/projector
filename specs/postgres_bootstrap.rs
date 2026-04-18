@@ -327,6 +327,21 @@ fn wait_for_postgres_ready(container_id: &str) {
     panic!("postgres container did not become ready");
 }
 
+// @verifies PROJECTOR.SERVER.HOSTING.POSTGRES_ADVANCED
+#[test]
+#[ignore = "requires local docker"]
+fn postgres_server_runs_against_postgres_backend() {
+    let postgres = DockerPostgres::start();
+    wait_for_postgres_store(&postgres.postgres_url);
+    let addr = spawn_postgres_server(&postgres.postgres_url).to_string();
+
+    let repo = temp_repo("postgres-hosting");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    assert!(first_sync.contains("workspace_id: "));
+}
+
 // @verifies PROJECTOR.SERVER.DOCUMENTS.CREATE_TRANSACTIONAL_DOCUMENT
 #[test]
 #[ignore = "requires local docker"]

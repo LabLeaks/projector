@@ -13,6 +13,18 @@ dist = true
 name = "projector"
 path = "src/main.rs"
 
+[[test]]
+name = "local_bootstrap"
+path = "../../specs/local_bootstrap.rs"
+
+[[test]]
+name = "postgres_bootstrap"
+path = "../../specs/postgres_bootstrap.rs"
+
+[[test]]
+name = "release_pipeline"
+path = "../../specs/release_pipeline.rs"
+
 [dependencies]
 crossterm = "0.28"
 libc = "0.2"

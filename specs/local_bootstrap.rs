@@ -1592,6 +1592,38 @@ fn deploy_uses_sysbox_isolation_for_default_byo_setup() {
     assert!(!ssh_log.contains("nohup"));
 }
 
+// @verifies PROJECTOR.SERVER.HOSTING.SQLITE_DEFAULT
+#[test]
+fn deploy_defaults_remote_byo_setup_to_sqlite() {
+    let repo = temp_repo("deploy-defaults-sqlite");
+    let projector_home = temp_projector_home("deploy-defaults-sqlite");
+    let (fake_bin, _ssh_log, _scp_log) = install_fake_ssh_tools(&projector_home);
+    let path_env = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").expect("path env")
+    );
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    let output = run_projector_with_env(
+        &repo,
+        &[
+            "deploy",
+            "--profile",
+            "homebox",
+            "--ssh",
+            "user@127.0.0.1",
+            "--yes",
+        ],
+        &[("PROJECTOR_HOME", projector_home_str), ("PATH", &path_env)],
+    );
+
+    assert!(output.contains("backend: sqlite"));
+    assert!(output.contains("server_addr: 127.0.0.1:8942"));
+    assert!(output.contains("remote_dir: ~/.projector"));
+    assert!(output.contains("sqlite_path: ~/.projector/projector.sqlite3"));
+    assert!(output.contains("listen_addr: 0.0.0.0:8942"));
+}
+
 // @verifies PROJECTOR.CLI.DEPLOY.REGISTERS_SERVER_PROFILE
 #[test]
 fn deploy_registers_and_selects_server_profile() {

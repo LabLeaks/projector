@@ -130,7 +130,6 @@ mod tests {
     }
 
     #[test]
-    // @verifies PROJECTOR.SERVER.HOSTING.POSTGRES_ADVANCED
     fn parse_serve_args_accepts_postgres_backend() {
         let args = vec![
             "--addr".to_owned(),

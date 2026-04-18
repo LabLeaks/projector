@@ -128,7 +128,6 @@ mod tests {
         }
     }
 
-    // @verifies PROJECTOR.CLI.SYNC.USES_SLOW_BACKSTOPS
     #[test]
     fn daemon_intervals_back_off_from_the_main_tick() {
         let intervals = DaemonIntervals::from_options(&MachineDaemonOptions {
@@ -142,7 +141,6 @@ mod tests {
         assert!(intervals.local_debounce > intervals.tick);
     }
 
-    // @verifies PROJECTOR.CLI.SYNC.SCOPES_LOCAL_WORK_TO_CHANGED_ENTRIES
     #[test]
     fn affected_target_indexes_scope_local_work_to_changed_entries() {
         let sync_targets = vec![
@@ -162,7 +160,6 @@ mod tests {
         assert_eq!(all_target_indexes_except(4, &[1, 3]), vec![0, 2]);
     }
 
-    // @verifies PROJECTOR.CLI.SYNC.COALESCES_LOCAL_EVENT_BURSTS
     #[test]
     fn pending_local_work_coalesces_bursts_before_flushing_one_batch() {
         let debounce = Duration::from_millis(200);
@@ -182,7 +179,6 @@ mod tests {
         );
     }
 
-    // @verifies PROJECTOR.CLI.SYNC.REUSES_SERVER_TRANSPORTS
     #[test]
     fn cached_transport_reuses_one_transport_per_server_address() {
         let mut cache = std::collections::BTreeMap::new();

@@ -233,7 +233,7 @@ fn base64_encode(input: &str) -> String {
 }
 
 fn release_assets() -> Value {
-    serde_json::from_str(include_str!("../../../scripts/release-assets.json"))
+    serde_json::from_str(include_str!("../scripts/release-assets.json"))
         .expect("release assets json should be valid")
 }
 
