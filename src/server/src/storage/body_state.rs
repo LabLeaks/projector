@@ -340,7 +340,12 @@ impl BodyStateModel for FullTextBodyModel {
     }
 
     fn state_from_materialized_text(&self, text: impl Into<String>) -> CanonicalBodyState {
-        CanonicalBodyState::full_text_merge_v1(text)
+        let text = text.into();
+        self.state_from_yrs_checkpoint(
+            YrsTextCheckpoint::from_materialized_text(&text)
+                .expect("materialized UTF-8 text should convert into a yrs checkpoint"),
+        )
+        .expect("yrs checkpoint should materialize into canonical text state")
     }
 
     fn state_from_yrs_checkpoint(
@@ -358,7 +363,7 @@ impl BodyStateModel for FullTextBodyModel {
         let storage_payload = storage_payload.into();
         match kind {
             CanonicalBodyStateKind::FullTextMergeV1 => {
-                Ok(self.state_from_materialized_text(storage_payload))
+                Ok(CanonicalBodyState::full_text_merge_v1(storage_payload))
             }
             CanonicalBodyStateKind::YrsTextCheckpointV1 => self.state_from_yrs_checkpoint(
                 YrsTextCheckpoint::from_storage_payload(&storage_payload)?,
@@ -470,15 +475,10 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
         current_state: &CanonicalBodyState,
         incoming_text: &str,
     ) -> BodyConvergenceResult {
-        debug_assert_eq!(
-            current_state.kind(),
-            CanonicalBodyStateKind::FullTextMergeV1,
-            "current server code only converges full-text merge body state",
-        );
         let current_text = current_state.materialized_text();
 
         if current_text == base_text {
-            let canonical_state = CanonicalBodyState::full_text_merge_v1(incoming_text);
+            let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(incoming_text);
             return BodyConvergenceResult {
                 retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                     base_text,
@@ -514,7 +514,7 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
                 &current_span,
                 &incoming_span,
             );
-            let canonical_state = CanonicalBodyState::full_text_merge_v1(merged);
+            let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(merged);
             return BodyConvergenceResult {
                 retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                     base_text,
@@ -531,7 +531,7 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
             ensure_trailing_newline(current_text),
             ensure_trailing_newline(incoming_text),
         );
-        let canonical_state = CanonicalBodyState::full_text_merge_v1(conflicted);
+        let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(conflicted);
         BodyConvergenceResult {
             retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                 base_text,
@@ -718,6 +718,16 @@ mod tests {
             true,
         );
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn materialized_text_defaults_to_yrs_canonical_state() {
+        let model = FullTextBodyModel;
+        let state = model.state_from_materialized_text("default yrs body\n");
+
+        assert_eq!(state.kind(), CanonicalBodyStateKind::YrsTextCheckpointV1);
+        assert_eq!(state.materialized_text(), "default yrs body\n");
+        assert_ne!(state.storage_payload(), "default yrs body\n");
     }
 
     #[test]
