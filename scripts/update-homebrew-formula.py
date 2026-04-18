@@ -9,6 +9,7 @@ sys.dont_write_bytecode = True
 
 import base64
 import json
+import subprocess
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -38,13 +39,19 @@ def release_assets(root: Path, tag: str) -> dict[str, dict]:
     return {asset["name"]: asset for asset in payload["assets"]}
 
 
-def formula_file(root: Path) -> tuple[str, str]:
-    payload = json.loads(
-        run_checked(
-            root,
-            ["gh", "api", f"repos/{TAP_REPOSITORY}/contents/{FORMULA_PATH}"],
-        )
+def formula_file(root: Path) -> tuple[str | None, str | None]:
+    result = subprocess.run(
+        ["gh", "api", f"repos/{TAP_REPOSITORY}/contents/{FORMULA_PATH}"],
+        cwd=root,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        if "404" in result.stderr or "Not Found" in result.stderr:
+            return None, None
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+    payload = json.loads(result.stdout)
     content = base64.b64decode(payload["content"]).decode()
     return content, str(payload["sha"])
 
@@ -119,24 +126,22 @@ def main() -> int:
     _, sha = formula_file(root)
     formula = build_formula(version, assets)
     encoded = base64.b64encode(formula.encode()).decode()
-    run_checked(
-        root,
-        [
-            "gh",
-            "api",
-            f"repos/{TAP_REPOSITORY}/contents/{FORMULA_PATH}",
-            "--method",
-            "PUT",
-            "-f",
-            f"message=Update Formula/projector.rb for {tag}",
-            "-f",
-            f"content={encoded}",
-            "-f",
-            f"sha={sha}",
-            "-f",
-            "branch=main",
-        ],
-    )
+    command = [
+        "gh",
+        "api",
+        f"repos/{TAP_REPOSITORY}/contents/{FORMULA_PATH}",
+        "--method",
+        "PUT",
+        "-f",
+        f"message=Update Formula/projector.rb for {tag}",
+        "-f",
+        f"content={encoded}",
+        "-f",
+        "branch=main",
+    ]
+    if sha is not None:
+        command.extend(["-f", f"sha={sha}"])
+    run_checked(root, command)
     print(f"Updated {TAP_REPOSITORY}/{FORMULA_PATH} for {tag}")
     return 0
 

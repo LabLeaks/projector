@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[package.metadata.dist]
+dist = true
+
 [lib]
 name = "projector_server"
 path = "src/lib.rs"

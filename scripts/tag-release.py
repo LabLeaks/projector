@@ -166,7 +166,10 @@ def main() -> int:
     if tag_exists and args.allow_existing_tag:
         tag_command.insert(3, "--allow-move")
     push_main_command = ["jj", "git", "push", "--bookmark", "main"]
-    push_tag_command = ["git", "push", "origin", f"refs/tags/{tag}"]
+    push_tag_command = ["git", "push"]
+    if tag_exists and args.allow_existing_tag:
+        push_tag_command.append("--force")
+    push_tag_command.extend(["origin", f"refs/tags/{tag}"])
     verify_github_release_command = [
         "bash",
         str(SCRIPT_DIR / "verify-github-release-published.sh"),

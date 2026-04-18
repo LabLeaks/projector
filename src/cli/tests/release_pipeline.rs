@@ -104,11 +104,23 @@ fn tag_points_at_current_revision(tag: &str) -> bool {
         == current_release_revision()
 }
 
+fn effective_release_args(version: &str, args: &[&str]) -> Vec<String> {
+    let mut effective = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    let tag = format!("v{version}");
+    if tag_points_at_current_revision(&tag)
+        && !effective.iter().any(|arg| arg == "--allow-existing-tag")
+    {
+        effective.push("--allow-existing-tag".to_string());
+    }
+    effective
+}
+
 fn release_tag_dry_run(version: &str, args: &[&str]) -> Value {
+    let args = effective_release_args(version, args);
     let output = Command::new("python3")
         .arg("scripts/tag-release.py")
         .arg(version)
-        .args(args)
+        .args(&args)
         .arg("--dry-run")
         .current_dir(repo_root())
         .output()
@@ -136,6 +148,7 @@ fn release_tag_live_output_with_input(
     args: &[&str],
     input: &str,
 ) -> ReleaseExecution {
+    let args = effective_release_args(version, args);
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time before unix epoch")
@@ -148,7 +161,7 @@ fn release_tag_live_output_with_input(
     command
         .arg("scripts/tag-release.py")
         .arg(version)
-        .args(args)
+        .args(&args)
         .arg("--allow-mock-publish")
         .current_dir(repo_root())
         .env("PROJECTOR_RELEASE_MOCK_LOG_PATH", &log_path)
@@ -377,12 +390,22 @@ fn release_tag_dry_run_lists_checklist_and_publication_commands() {
         payload["push_tag_command"]
             .as_array()
             .expect("push_tag_command should be an array"),
-        &vec![
-            Value::String("git".to_string()),
-            Value::String("push".to_string()),
-            Value::String("origin".to_string()),
-            Value::String(format!("refs/tags/v{version}")),
-        ]
+        &(if tag_points_at_current_revision(&format!("v{version}")) {
+            vec![
+                Value::String("git".to_string()),
+                Value::String("push".to_string()),
+                Value::String("--force".to_string()),
+                Value::String("origin".to_string()),
+                Value::String(format!("refs/tags/v{version}")),
+            ]
+        } else {
+            vec![
+                Value::String("git".to_string()),
+                Value::String("push".to_string()),
+                Value::String("origin".to_string()),
+                Value::String(format!("refs/tags/v{version}")),
+            ]
+        })
     );
     assert_eq!(
         payload["update_homebrew_formula_command"]
