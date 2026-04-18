@@ -7,6 +7,9 @@ use std::path::Path;
 
 use projector_domain::{BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId};
 use serde::{Deserialize, Serialize};
+use yrs::updates::decoder::Decode;
+use yrs::updates::encoder::Encode;
+use yrs::{Doc, GetString, ReadTxn, StateVector, Text, Transact, Update};
 
 pub(crate) trait BodyStateModel {
     fn empty_state(&self) -> CanonicalBodyState;
@@ -124,6 +127,85 @@ pub(crate) fn upsert_body_state(
         snapshot
             .bodies
             .push(state.clone().into_document_body(document_id.clone()));
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct YrsTextCheckpoint {
+    merged_update_v1: Vec<u8>,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl YrsTextCheckpoint {
+    pub(crate) fn from_materialized_text(text: &str) -> Result<Self, String> {
+        let doc = Doc::new();
+        let body = doc.get_or_insert_text("body");
+        let mut txn = doc.transact_mut();
+        body.push(&mut txn, text);
+        drop(txn);
+        Self::from_doc(&doc)
+    }
+
+    pub(crate) fn from_doc(doc: &Doc) -> Result<Self, String> {
+        let txn = doc.transact();
+        let merged_update_v1 = txn.encode_diff_v1(&StateVector::default());
+        let checkpoint = Self { merged_update_v1 };
+        checkpoint.materialized_text()?;
+        Ok(checkpoint)
+    }
+
+    pub(crate) fn from_checkpoint_bytes(merged_update_v1: Vec<u8>) -> Result<Self, String> {
+        let checkpoint = Self { merged_update_v1 };
+        checkpoint.materialized_text()?;
+        Ok(checkpoint)
+    }
+
+    pub(crate) fn checkpoint_bytes(&self) -> &[u8] {
+        &self.merged_update_v1
+    }
+
+    pub(crate) fn to_doc(&self) -> Result<Doc, String> {
+        let doc = Doc::new();
+        let update = Update::decode_v1(self.merged_update_v1.as_slice())
+            .map_err(|err| format!("decode yrs checkpoint update: {err}"))?;
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update)
+            .map_err(|err| format!("apply yrs checkpoint update: {err}"))?;
+        drop(txn);
+        Ok(doc)
+    }
+
+    pub(crate) fn materialized_text(&self) -> Result<String, String> {
+        let doc = self.to_doc()?;
+        let body = doc.get_or_insert_text("body");
+        let txn = doc.transact();
+        Ok(body.get_string(&txn))
+    }
+
+    pub(crate) fn state_vector_v1(&self) -> Result<Vec<u8>, String> {
+        let doc = self.to_doc()?;
+        let txn = doc.transact();
+        Ok(txn.state_vector().encode_v1())
+    }
+
+    pub(crate) fn diff_update_v1(&self, remote_state_vector_v1: &[u8]) -> Result<Vec<u8>, String> {
+        let doc = self.to_doc()?;
+        let remote_state_vector = StateVector::decode_v1(remote_state_vector_v1)
+            .map_err(|err| format!("decode yrs state vector: {err}"))?;
+        let txn = doc.transact();
+        Ok(txn.encode_diff_v1(&remote_state_vector))
+    }
+
+    pub(crate) fn with_update_v1(&self, update_v1: &[u8]) -> Result<Self, String> {
+        let doc = self.to_doc()?;
+        let update = Update::decode_v1(update_v1)
+            .map_err(|err| format!("decode yrs incremental update: {err}"))?;
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update)
+            .map_err(|err| format!("apply yrs incremental update: {err}"))?;
+        drop(txn);
+        Self::from_doc(&doc)
     }
 }
 
@@ -510,8 +592,9 @@ fn ensure_trailing_newline(text: &str) -> String {
 mod tests {
     use super::{
         BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FullTextBodyModel,
-        RetainedBodyHistoryKind, ThreeWayMergeBodyEngine,
+        RetainedBodyHistoryKind, ThreeWayMergeBodyEngine, YrsTextCheckpoint,
     };
+    use yrs::{GetString, Text, Transact};
 
     #[test]
     fn three_way_engine_merges_non_overlapping_edits() {
@@ -569,5 +652,89 @@ mod tests {
             true,
         );
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn yrs_checkpoint_materializes_text_and_round_trips_checkpoint_bytes() {
+        let checkpoint = YrsTextCheckpoint::from_materialized_text("hello from yrs\n")
+            .expect("build checkpoint");
+
+        assert_eq!(
+            checkpoint
+                .materialized_text()
+                .expect("materialize checkpoint"),
+            "hello from yrs\n"
+        );
+
+        let reloaded =
+            YrsTextCheckpoint::from_checkpoint_bytes(checkpoint.checkpoint_bytes().to_vec())
+                .expect("reload checkpoint");
+        assert_eq!(
+            reloaded
+                .materialized_text()
+                .expect("materialize reloaded checkpoint"),
+            "hello from yrs\n"
+        );
+    }
+
+    #[test]
+    fn yrs_checkpoint_converges_concurrent_updates_via_exchanged_updates() {
+        let base = YrsTextCheckpoint::from_materialized_text("alpha\nbeta\ngamma\n")
+            .expect("base checkpoint");
+        let local_doc = base.to_doc().expect("load local doc");
+        let remote_doc = base.to_doc().expect("load remote doc");
+
+        {
+            let text = local_doc.get_or_insert_text("body");
+            let mut txn = local_doc.transact_mut();
+            text.insert(&mut txn, 6, "local ");
+        }
+        {
+            let text = remote_doc.get_or_insert_text("body");
+            let mut txn = remote_doc.transact_mut();
+            text.insert(&mut txn, 17, "remote ");
+        }
+
+        let local = YrsTextCheckpoint::from_doc(&local_doc).expect("checkpoint local");
+        let remote = YrsTextCheckpoint::from_doc(&remote_doc).expect("checkpoint remote");
+        let local_update = local
+            .diff_update_v1(&remote.state_vector_v1().expect("remote state vector"))
+            .expect("local diff update");
+        let remote_update = remote
+            .diff_update_v1(&local.state_vector_v1().expect("local state vector"))
+            .expect("remote diff update");
+
+        let merged_local = local
+            .with_update_v1(&remote_update)
+            .expect("merge remote into local");
+        let merged_remote = remote
+            .with_update_v1(&local_update)
+            .expect("merge local into remote");
+        let expected = "alpha\nlocal beta\ngamma\nremote ";
+
+        assert_eq!(
+            merged_local
+                .materialized_text()
+                .expect("materialize merged local"),
+            expected
+        );
+        assert_eq!(
+            merged_remote
+                .materialized_text()
+                .expect("materialize merged remote"),
+            expected
+        );
+        assert!(!expected.contains("<<<<<<<"));
+    }
+
+    #[test]
+    fn yrs_checkpoint_rebuilds_doc_from_checkpoint_bytes() {
+        let checkpoint = YrsTextCheckpoint::from_materialized_text("rebuilt from checkpoint")
+            .expect("checkpoint");
+        let rebuilt_doc = checkpoint.to_doc().expect("rebuild doc");
+        let text = rebuilt_doc.get_or_insert_text("body");
+        let txn = rebuilt_doc.transact();
+
+        assert_eq!(text.get_string(&txn), "rebuilt from checkpoint");
     }
 }
