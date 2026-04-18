@@ -11,14 +11,13 @@ use projector_domain::{
 };
 
 use super::super::StoreError;
+use super::super::body_persistence::{SnapshotBodyPersistence, SqliteBodyPersistence};
 use super::super::body_state::{
     BodyConvergenceEngine, BodyStateModel, FULL_TEXT_BODY_MODEL, ThreeWayMergeBodyEngine,
-    body_state_from_snapshot,
 };
 use super::state::{
-    append_body_revision, append_event, append_path_revision, display_document_path,
-    load_required_workspace_state, make_document_id, make_event, save_workspace_state,
-    upsert_body_state,
+    append_event, append_path_revision, display_document_path, load_required_workspace_state,
+    make_document_id, make_event, save_workspace_state,
 };
 
 pub(super) fn create_document_tx(
@@ -58,11 +57,9 @@ pub(super) fn create_document_tx(
         kind: DocumentKind::Text,
         deleted: false,
     });
-    state.snapshot.bodies.push(
-        FULL_TEXT_BODY_MODEL
-            .state_from_materialized_text(request.text.clone())
-            .into_document_body(document_id.clone()),
-    );
+    let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
+    let initial_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone());
+    body_persistence.write_current_state(&mut state.snapshot, &document_id, &initial_state);
 
     let event = make_event(
         &mut state,
@@ -78,19 +75,12 @@ pub(super) fn create_document_tx(
     );
     save_workspace_state(transaction, &state)?;
     append_event(transaction, &request.workspace_id, &event)?;
-    append_body_revision(
-        transaction,
-        &request.workspace_id,
-        &super::super::history::FileBodyRevision::from_retained_history(
-            event.cursor,
-            event.cursor,
-            request.actor_id.clone(),
-            document_id.as_str().to_owned(),
-            &FULL_TEXT_BODY_MODEL.created_history(
-                &FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone()),
-            ),
-            event.timestamp_ms,
-        ),
+    body_persistence.append_retained_history(
+        event.cursor,
+        &request.actor_id,
+        document_id.as_str(),
+        &FULL_TEXT_BODY_MODEL.created_history(&initial_state),
+        event.timestamp_ms,
     )?;
     append_path_revision(
         transaction,
@@ -130,10 +120,10 @@ pub(super) fn update_document_tx(
         )));
     };
 
-    let current_state = body_state_from_snapshot(&state.snapshot, &document_id)
-        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
+    let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
+    let current_state = body_persistence.load_current_state(&state.snapshot, &document_id);
     let merge = ThreeWayMergeBodyEngine.apply_update(&request.base_text, &current_state, &request.text);
-    upsert_body_state(&mut state.snapshot, &document_id, merge.canonical_state());
+    body_persistence.write_current_state(&mut state.snapshot, &document_id, merge.canonical_state());
 
     let event = make_event(
         &mut state,
@@ -146,17 +136,12 @@ pub(super) fn update_document_tx(
     );
     save_workspace_state(transaction, &state)?;
     append_event(transaction, &request.workspace_id, &event)?;
-    append_body_revision(
-        transaction,
-        &request.workspace_id,
-        &super::super::history::FileBodyRevision::from_retained_history(
-            event.cursor,
-            event.cursor,
-            request.actor_id.clone(),
-            request.document_id.clone(),
-            merge.retained_history(),
-            event.timestamp_ms,
-        ),
+    body_persistence.append_retained_history(
+        event.cursor,
+        &request.actor_id,
+        &request.document_id,
+        merge.retained_history(),
+        event.timestamp_ms,
     )
 }
 

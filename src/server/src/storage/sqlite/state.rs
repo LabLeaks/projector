@@ -6,7 +6,6 @@ Owns the SQLite schema, workspace row persistence, append-only row writes, and s
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::super::body_state::CanonicalBodyState;
 use projector_domain::{
     BootstrapSnapshot, DocumentId, ProvenanceEvent, ProvenanceEventKind, SyncEntryKind,
 };
@@ -126,7 +125,7 @@ pub(super) fn append_event(
     Ok(())
 }
 
-pub(super) fn append_body_revision(
+pub(crate) fn append_body_revision(
     connection: &Connection,
     workspace_id: &str,
     revision: &super::super::history::FileBodyRevision,
@@ -169,24 +168,6 @@ pub(super) fn make_event(
         relative_path,
         summary,
         kind,
-    }
-}
-
-pub(super) fn upsert_body_state(
-    snapshot: &mut BootstrapSnapshot,
-    document_id: &DocumentId,
-    state: &CanonicalBodyState,
-) {
-    if let Some(body) = snapshot
-        .bodies
-        .iter_mut()
-        .find(|body| body.document_id == *document_id)
-    {
-        body.text = state.materialized_text().to_owned();
-    } else {
-        snapshot
-            .bodies
-            .push(state.clone().into_document_body(document_id.clone()));
     }
 }
 

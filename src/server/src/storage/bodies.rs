@@ -16,13 +16,13 @@ use projector_domain::{
 
 use super::body_state::{
     BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL,
-    RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine, body_state_from_snapshot,
-    upsert_body_state,
+    RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
+};
+use super::body_persistence::{
+    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
 };
 use super::StoreError;
-use super::history::{
-    FileBodyRevision, file_append_body_revision, file_read_body_revisions, insert_body_revision_tx,
-};
+use super::history::{file_read_body_revisions};
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;
 
@@ -71,11 +71,11 @@ pub(crate) fn file_update_document(
         )));
     }
 
-    let current_state = body_state_from_snapshot(&snapshot, &document_id)
-        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
+    let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
+    let current_state = body_persistence.load_current_state(&snapshot, &document_id);
     let merge = merge_text_update(&request.base_text, &current_state, &request.text);
 
-    upsert_body_state(&mut snapshot, &document_id, merge.canonical_state());
+    body_persistence.write_current_state(&mut snapshot, &document_id, merge.canonical_state());
     let Some(entry) = snapshot
         .manifest
         .entries
@@ -104,17 +104,12 @@ pub(crate) fn file_update_document(
             kind: ProvenanceEventKind::DocumentUpdated,
         },
     )?;
-    file_append_body_revision(
-        state_dir,
-        &request.workspace_id,
-        FileBodyRevision::from_retained_history(
-            event_cursor,
-            event_cursor,
-            request.actor_id.clone(),
-            request.document_id.clone(),
-            merge.retained_history(),
-            now_ms(),
-        ),
+    body_persistence.append_retained_history(
+        event_cursor,
+        &request.actor_id,
+        &request.document_id,
+        merge.retained_history(),
+        now_ms(),
     )?;
     Ok(())
 }
@@ -177,18 +172,15 @@ pub(crate) fn file_restore_document_body_revision(
                 request.document_id, request.seq
             ))
         })?;
-    let current_state = body_state_from_snapshot(&snapshot, &document_id)
-        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
+    let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
+    let current_state = body_persistence.load_current_state(&snapshot, &document_id);
 
     snapshot.manifest.entries[entry_index].deleted = false;
     snapshot.manifest.entries[entry_index].mount_relative_path = target_mount_relative_path.clone();
     snapshot.manifest.entries[entry_index].relative_path = target_relative_path.clone();
 
-    upsert_body_state(
-        &mut snapshot,
-        &document_id,
-        &target_revision.materialized_body_state(),
-    );
+    let target_state = target_revision.materialized_body_state();
+    body_persistence.write_current_state(&mut snapshot, &document_id, &target_state);
 
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
     let event_cursor =
@@ -212,20 +204,12 @@ pub(crate) fn file_restore_document_body_revision(
             kind: ProvenanceEventKind::DocumentUpdated,
         },
     )?;
-    file_append_body_revision(
-        state_dir,
-        &request.workspace_id,
-        FileBodyRevision::from_retained_history(
-            event_cursor,
-            event_cursor,
-            request.actor_id.clone(),
-            request.document_id.clone(),
-            &FULL_TEXT_BODY_MODEL.restored_history(
-                &current_state,
-                &target_revision.materialized_body_state(),
-            ),
-            now_ms(),
-        ),
+    body_persistence.append_retained_history(
+        event_cursor,
+        &request.actor_id,
+        &request.document_id,
+        &FULL_TEXT_BODY_MODEL.restored_history(&current_state, &target_state),
+        now_ms(),
     )?;
     if entry.deleted
         || target_mount_relative_path != entry.mount_relative_path
@@ -269,25 +253,13 @@ pub(crate) async fn postgres_update_document(
     };
     let mount_path = path_row.get::<_, String>("mount_path");
     let relative_path = path_row.get::<_, String>("relative_path");
-    let current_state = transaction
-        .query_opt(
-            "select body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
-            &[&request.workspace_id, &request.document_id],
-        )
-        .await?
-        .map(|row| FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text")))
-        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
+    let body_persistence = PostgresBodyPersistence::new(transaction, &request.workspace_id);
+    let current_state = body_persistence
+        .load_current_state(&request.document_id)
+        .await?;
     let merge = merge_text_update(&request.base_text, &current_state, &request.text);
-    let merged_text = merge.canonical_state().materialized_text().to_owned();
-
-    transaction
-        .execute(
-            "insert into document_body_snapshots \
-             (document_id, workspace_id, body_text, compacted_through_seq) \
-             values ($1, $2, $3, 0) \
-             on conflict (document_id) do update set body_text = excluded.body_text, updated_at = now()",
-            &[&request.document_id, &request.workspace_id, &merged_text],
-        )
+    body_persistence
+        .write_current_state(&request.document_id, merge.canonical_state())
         .await?;
     let event_cursor = insert_event_tx(
         transaction,
@@ -300,15 +272,14 @@ pub(crate) async fn postgres_update_document(
         &merge.summary_for_path(Path::new(&mount_path), Path::new(&relative_path)),
     )
     .await?;
-    insert_body_revision_tx(
-        transaction,
-        &request.workspace_id,
-        &request.document_id,
-        event_cursor,
-        &request.actor_id,
-        merge.retained_history(),
-    )
-    .await?;
+    body_persistence
+        .append_retained_history(
+            event_cursor,
+            &request.actor_id,
+            &request.document_id,
+            merge.retained_history(),
+        )
+        .await?;
 
     Ok(())
 }
@@ -381,14 +352,10 @@ pub(crate) async fn postgres_restore_document_body_revision(
             ));
         }
     }
-    let current_state = transaction
-        .query_opt(
-            "select body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
-            &[&request.workspace_id, &request.document_id],
-        )
-        .await?
-        .map(|row| FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text")))
-        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
+    let body_persistence = PostgresBodyPersistence::new(transaction, &request.workspace_id);
+    let current_state = body_persistence
+        .load_current_state(&request.document_id)
+        .await?;
     let target_text = transaction
         .query_opt(
             "select body_text from document_body_revisions \
@@ -422,14 +389,9 @@ pub(crate) async fn postgres_restore_document_body_revision(
             .await?;
     }
 
-    transaction
-        .execute(
-            "insert into document_body_snapshots \
-             (document_id, workspace_id, body_text, compacted_through_seq) \
-             values ($1, $2, $3, 0) \
-             on conflict (document_id) do update set body_text = excluded.body_text, updated_at = now()",
-            &[&request.document_id, &request.workspace_id, &target_text],
-        )
+    let target_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(target_text);
+    body_persistence
+        .write_current_state(&request.document_id, &target_state)
         .await?;
     let event_cursor = insert_event_tx(
         transaction,
@@ -445,18 +407,14 @@ pub(crate) async fn postgres_restore_document_body_revision(
         ),
     )
     .await?;
-    insert_body_revision_tx(
-        transaction,
-        &request.workspace_id,
-        &request.document_id,
-        event_cursor,
-        &request.actor_id,
-        &FULL_TEXT_BODY_MODEL.restored_history(
-            &current_state,
-            &FULL_TEXT_BODY_MODEL.state_from_materialized_text(target_text),
-        ),
-    )
-    .await?;
+    body_persistence
+        .append_retained_history(
+            event_cursor,
+            &request.actor_id,
+            &request.document_id,
+            &FULL_TEXT_BODY_MODEL.restored_history(&current_state, &target_state),
+        )
+        .await?;
     if was_deleted || target_mount_path != mount_path || target_relative_path != relative_path {
         super::history::insert_path_revision_tx(
             transaction,

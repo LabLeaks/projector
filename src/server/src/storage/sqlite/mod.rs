@@ -20,7 +20,7 @@ use super::{StoreError, WorkspaceStore};
 mod history;
 mod manifest;
 mod restore;
-mod state;
+pub(crate) mod state;
 mod workspace;
 
 pub struct SqliteWorkspaceStore {

@@ -11,15 +11,15 @@ use projector_domain::{
     MoveDocumentRequest, ProvenanceEvent, ProvenanceEventKind,
 };
 
+use super::body_persistence::{
+    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
+};
 use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use super::StoreError;
 use super::bodies::{
     document_kind_db_value, file_persist_workspace_snapshot, file_read_workspace_snapshot,
 };
-use super::history::{
-    FileBodyRevision, FilePathRevision, file_append_body_revision, file_append_path_revision,
-    insert_body_revision_tx, insert_path_revision_tx,
-};
+use super::history::{FilePathRevision, file_append_path_revision, insert_path_revision_tx};
 use super::provenance::{
     current_workspace_cursor_tx, file_append_workspace_event, file_workspace_cursor,
     insert_event_tx,
@@ -92,11 +92,9 @@ pub(crate) fn file_create_document(
         kind: DocumentKind::Text,
         deleted: false,
     });
-    snapshot.bodies.push(
-        FULL_TEXT_BODY_MODEL
-            .state_from_materialized_text(request.text.clone())
-            .into_document_body(document_id.clone()),
-    );
+    let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
+    let initial_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone());
+    body_persistence.write_current_state(&mut snapshot, &document_id, &initial_state);
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
     file_append_workspace_event(
@@ -116,20 +114,12 @@ pub(crate) fn file_create_document(
             kind: ProvenanceEventKind::DocumentCreated,
         },
     )?;
-    file_append_body_revision(
-        state_dir,
-        &request.workspace_id,
-        FileBodyRevision::from_retained_history(
-            event_cursor,
-            event_cursor,
-            request.actor_id.clone(),
-            document_id.as_str().to_owned(),
-            &FULL_TEXT_BODY_MODEL
-                .created_history(&FULL_TEXT_BODY_MODEL.state_from_materialized_text(
-                    request.text.clone(),
-                )),
-            now_ms(),
-        ),
+    body_persistence.append_retained_history(
+        event_cursor,
+        &request.actor_id,
+        document_id.as_str(),
+        &FULL_TEXT_BODY_MODEL.created_history(&initial_state),
+        now_ms(),
     )?;
     file_append_path_revision(
         state_dir,
@@ -387,13 +377,10 @@ pub(crate) async fn postgres_create_document(
             ],
         )
         .await?;
-    transaction
-        .execute(
-            "insert into document_body_snapshots \
-             (document_id, workspace_id, body_text, compacted_through_seq) \
-             values ($1, $2, $3, 0)",
-            &[&document_id.as_str(), &request.workspace_id, &request.text],
-        )
+    let body_persistence = PostgresBodyPersistence::new(transaction, &request.workspace_id);
+    let initial_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone());
+    body_persistence
+        .write_current_state(document_id.as_str(), &initial_state)
         .await?;
     let event_cursor = insert_event_tx(
         transaction,
@@ -409,18 +396,14 @@ pub(crate) async fn postgres_create_document(
         ),
     )
     .await?;
-    insert_body_revision_tx(
-        transaction,
-        &request.workspace_id,
-        document_id.as_str(),
-        event_cursor,
-        &request.actor_id,
-        &FULL_TEXT_BODY_MODEL
-            .created_history(&FULL_TEXT_BODY_MODEL.state_from_materialized_text(
-                request.text.clone(),
-            )),
-    )
-    .await?;
+    body_persistence
+        .append_retained_history(
+            event_cursor,
+            &request.actor_id,
+            document_id.as_str(),
+            &FULL_TEXT_BODY_MODEL.created_history(&initial_state),
+        )
+        .await?;
     insert_path_revision_tx(
         transaction,
         &request.workspace_id,

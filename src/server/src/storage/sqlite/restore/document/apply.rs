@@ -5,14 +5,14 @@ Owns SQLite document-restore mutation and append-only history writes after a res
 // @fileimplements PROJECTOR.SERVER.SQLITE_DOCUMENT_RESTORE_APPLY
 use projector_domain::{ProvenanceEventKind, RestoreDocumentBodyRevisionRequest};
 
+use crate::storage::body_persistence::{SnapshotBodyPersistence, SqliteBodyPersistence};
 use crate::storage::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use crate::storage::sqlite::state::{
-    append_body_revision, append_event, append_path_revision, make_event, save_workspace_state,
-    upsert_body_state,
+    append_event, append_path_revision, make_event, save_workspace_state,
 };
 use crate::storage::{
     StoreError,
-    history::{FileBodyRevision, FilePathRevision},
+    history::FilePathRevision,
 };
 
 use super::resolve::DocumentRestoreResolution;
@@ -33,15 +33,15 @@ pub(super) fn apply_document_restore(
             .map(|body| body.text.clone())
             .unwrap_or_default(),
     );
-    let target_state =
-        resolution.target_revision.retained_history().materialized_body_state();
+    let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
+    let target_state = resolution.target_revision.retained_history().materialized_body_state();
 
     resolution.state.snapshot.manifest.entries[resolution.entry_index].deleted = false;
     resolution.state.snapshot.manifest.entries[resolution.entry_index].mount_relative_path =
         resolution.target_mount.clone();
     resolution.state.snapshot.manifest.entries[resolution.entry_index].relative_path =
         resolution.target_path.clone();
-    upsert_body_state(
+    body_persistence.write_current_state(
         &mut resolution.state.snapshot,
         &resolution.document_id,
         &target_state,
@@ -63,17 +63,12 @@ pub(super) fn apply_document_restore(
     );
     save_workspace_state(transaction, &resolution.state)?;
     append_event(transaction, &request.workspace_id, &event)?;
-    append_body_revision(
-        transaction,
-        &request.workspace_id,
-        &FileBodyRevision::from_retained_history(
-            event.cursor,
-            event.cursor,
-            request.actor_id.clone(),
-            request.document_id.clone(),
-            &FULL_TEXT_BODY_MODEL.restored_history(&current_state, &target_state),
-            event.timestamp_ms,
-        ),
+    body_persistence.append_retained_history(
+        event.cursor,
+        &request.actor_id,
+        &request.document_id,
+        &FULL_TEXT_BODY_MODEL.restored_history(&current_state, &target_state),
+        event.timestamp_ms,
     )?;
     if entry.deleted
         || resolution.target_mount != entry.mount_relative_path
