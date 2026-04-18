@@ -5,7 +5,7 @@ Owns SQLite document-restore mutation and append-only history writes after a res
 // @fileimplements PROJECTOR.SERVER.SQLITE_DOCUMENT_RESTORE_APPLY
 use projector_domain::{ProvenanceEventKind, RestoreDocumentBodyRevisionRequest};
 
-use crate::storage::body_state::{CanonicalBodyState, RetainedBodyHistoryPayload};
+use crate::storage::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use crate::storage::sqlite::state::{
     append_body_revision, append_event, append_path_revision, make_event, save_workspace_state,
     upsert_body_state,
@@ -23,14 +23,18 @@ pub(super) fn apply_document_restore(
     mut resolution: DocumentRestoreResolution,
 ) -> Result<(), StoreError> {
     let entry = resolution.state.snapshot.manifest.entries[resolution.entry_index].clone();
-    let current_text = resolution
-        .state
-        .snapshot
-        .bodies
-        .iter()
-        .find(|body| body.document_id == resolution.document_id)
-        .map(|body| body.text.clone())
-        .unwrap_or_default();
+    let current_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(
+        resolution
+            .state
+            .snapshot
+            .bodies
+            .iter()
+            .find(|body| body.document_id == resolution.document_id)
+            .map(|body| body.text.clone())
+            .unwrap_or_default(),
+    );
+    let target_state =
+        resolution.target_revision.retained_history().materialized_body_state();
 
     resolution.state.snapshot.manifest.entries[resolution.entry_index].deleted = false;
     resolution.state.snapshot.manifest.entries[resolution.entry_index].mount_relative_path =
@@ -40,7 +44,7 @@ pub(super) fn apply_document_restore(
     upsert_body_state(
         &mut resolution.state.snapshot,
         &resolution.document_id,
-        &CanonicalBodyState::full_text_merge_v1(resolution.target_revision.body_text.clone()),
+        &target_state,
     );
 
     let event = make_event(
@@ -67,11 +71,7 @@ pub(super) fn apply_document_restore(
             event.cursor,
             request.actor_id.clone(),
             request.document_id.clone(),
-            &RetainedBodyHistoryPayload::full_text_revision_v1(
-                current_text,
-                resolution.target_revision.body_text,
-                false,
-            ),
+            &FULL_TEXT_BODY_MODEL.restored_history(&current_state, &target_state),
             event.timestamp_ms,
         ),
     )?;

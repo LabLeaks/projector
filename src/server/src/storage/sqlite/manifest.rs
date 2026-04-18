@@ -12,7 +12,8 @@ use projector_domain::{
 
 use super::super::StoreError;
 use super::super::body_state::{
-    BodyConvergenceEngine, CanonicalBodyState, ThreeWayMergeBodyEngine, body_state_from_snapshot,
+    BodyConvergenceEngine, BodyStateModel, FULL_TEXT_BODY_MODEL, ThreeWayMergeBodyEngine,
+    body_state_from_snapshot,
 };
 use super::state::{
     append_body_revision, append_event, append_path_revision, display_document_path,
@@ -58,7 +59,8 @@ pub(super) fn create_document_tx(
         deleted: false,
     });
     state.snapshot.bodies.push(
-        CanonicalBodyState::full_text_merge_v1(request.text.clone())
+        FULL_TEXT_BODY_MODEL
+            .state_from_materialized_text(request.text.clone())
             .into_document_body(document_id.clone()),
     );
 
@@ -84,10 +86,8 @@ pub(super) fn create_document_tx(
             event.cursor,
             request.actor_id.clone(),
             document_id.as_str().to_owned(),
-            &super::super::body_state::RetainedBodyHistoryPayload::full_text_revision_v1(
-                String::new(),
-                request.text.clone(),
-                false,
+            &FULL_TEXT_BODY_MODEL.created_history(
+                &FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone()),
             ),
             event.timestamp_ms,
         ),
@@ -131,7 +131,7 @@ pub(super) fn update_document_tx(
     };
 
     let current_state = body_state_from_snapshot(&state.snapshot, &document_id)
-        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
     let merge = ThreeWayMergeBodyEngine.apply_update(&request.base_text, &current_state, &request.text);
     upsert_body_state(&mut state.snapshot, &document_id, merge.canonical_state());
 

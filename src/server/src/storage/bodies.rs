@@ -15,8 +15,9 @@ use projector_domain::{
 };
 
 use super::body_state::{
-    BodyConvergenceEngine, CanonicalBodyState, RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
-    body_state_from_snapshot, upsert_body_state,
+    BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL,
+    RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine, body_state_from_snapshot,
+    upsert_body_state,
 };
 use super::StoreError;
 use super::history::{
@@ -71,7 +72,7 @@ pub(crate) fn file_update_document(
     }
 
     let current_state = body_state_from_snapshot(&snapshot, &document_id)
-        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
     let merge = merge_text_update(&request.base_text, &current_state, &request.text);
 
     upsert_body_state(&mut snapshot, &document_id, merge.canonical_state());
@@ -177,7 +178,7 @@ pub(crate) fn file_restore_document_body_revision(
             ))
         })?;
     let current_state = body_state_from_snapshot(&snapshot, &document_id)
-        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
 
     snapshot.manifest.entries[entry_index].deleted = false;
     snapshot.manifest.entries[entry_index].mount_relative_path = target_mount_relative_path.clone();
@@ -219,10 +220,9 @@ pub(crate) fn file_restore_document_body_revision(
             event_cursor,
             request.actor_id.clone(),
             request.document_id.clone(),
-            &RetainedBodyHistoryPayload::full_text_revision_v1(
-                current_state.materialized_text().to_owned(),
-                target_revision.materialized_body_state().materialized_text().to_owned(),
-                false,
+            &FULL_TEXT_BODY_MODEL.restored_history(
+                &current_state,
+                &target_revision.materialized_body_state(),
             ),
             now_ms(),
         ),
@@ -275,8 +275,8 @@ pub(crate) async fn postgres_update_document(
             &[&request.workspace_id, &request.document_id],
         )
         .await?
-        .map(|row| CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text")))
-        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+        .map(|row| FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text")))
+        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
     let merge = merge_text_update(&request.base_text, &current_state, &request.text);
     let merged_text = merge.canonical_state().materialized_text().to_owned();
 
@@ -387,8 +387,8 @@ pub(crate) async fn postgres_restore_document_body_revision(
             &[&request.workspace_id, &request.document_id],
         )
         .await?
-        .map(|row| CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text")))
-        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+        .map(|row| FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text")))
+        .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state());
     let target_text = transaction
         .query_opt(
             "select body_text from document_body_revisions \
@@ -451,10 +451,9 @@ pub(crate) async fn postgres_restore_document_body_revision(
         &request.document_id,
         event_cursor,
         &request.actor_id,
-        &RetainedBodyHistoryPayload::full_text_revision_v1(
-            current_state.materialized_text().to_owned(),
-            target_text,
-            false,
+        &FULL_TEXT_BODY_MODEL.restored_history(
+            &current_state,
+            &FULL_TEXT_BODY_MODEL.state_from_materialized_text(target_text),
         ),
     )
     .await?;
@@ -540,7 +539,7 @@ where
         });
         if !deleted {
             snapshot.bodies.push(
-                CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text"))
+                FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text"))
                     .into_document_body(document_id),
             );
         }

@@ -7,6 +7,28 @@ use std::path::Path;
 
 use projector_domain::{BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId};
 
+pub(crate) trait BodyStateModel {
+    fn empty_state(&self) -> CanonicalBodyState;
+    fn state_from_materialized_text(&self, text: impl Into<String>) -> CanonicalBodyState;
+    fn history_from_stored_revision(
+        &self,
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+        conflicted: bool,
+    ) -> RetainedBodyHistoryPayload;
+    fn created_history(&self, state: &CanonicalBodyState) -> RetainedBodyHistoryPayload;
+    fn restored_history(
+        &self,
+        current_state: &CanonicalBodyState,
+        target_state: &CanonicalBodyState,
+    ) -> RetainedBodyHistoryPayload;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct FullTextBodyModel;
+
+pub(crate) const FULL_TEXT_BODY_MODEL: FullTextBodyModel = FullTextBodyModel;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CanonicalBodyStateKind {
     FullTextMergeV1,
@@ -19,7 +41,7 @@ pub(crate) struct CanonicalBodyState {
 }
 
 impl CanonicalBodyState {
-    pub(crate) fn full_text_merge_v1(text: impl Into<String>) -> Self {
+    fn full_text_merge_v1(text: impl Into<String>) -> Self {
         Self {
             kind: CanonicalBodyStateKind::FullTextMergeV1,
             materialized_text: text.into(),
@@ -50,7 +72,7 @@ pub(crate) fn body_state_from_snapshot(
         .bodies
         .iter()
         .find(|body| body.document_id == *document_id)
-        .map(|body| CanonicalBodyState::full_text_merge_v1(body.text.clone()))
+        .map(|body| FULL_TEXT_BODY_MODEL.state_from_materialized_text(body.text.clone()))
 }
 
 pub(crate) fn upsert_body_state(
@@ -85,7 +107,7 @@ pub(crate) struct RetainedBodyHistoryPayload {
 }
 
 impl RetainedBodyHistoryPayload {
-    pub(crate) fn full_text_revision_v1(
+    fn full_text_revision_v1(
         base_text: impl Into<String>,
         materialized_text: impl Into<String>,
         conflicted: bool,
@@ -110,6 +132,10 @@ impl RetainedBodyHistoryPayload {
         self.conflicted
     }
 
+    pub(crate) fn materialized_body_state(&self) -> CanonicalBodyState {
+        FULL_TEXT_BODY_MODEL.state_from_materialized_text(self.materialized_text.clone())
+    }
+
     pub(crate) fn to_public_revision(
         &self,
         seq: u64,
@@ -126,6 +152,41 @@ impl RetainedBodyHistoryPayload {
             conflicted: self.conflicted,
             timestamp_ms,
         }
+    }
+}
+
+impl BodyStateModel for FullTextBodyModel {
+    fn empty_state(&self) -> CanonicalBodyState {
+        self.state_from_materialized_text(String::new())
+    }
+
+    fn state_from_materialized_text(&self, text: impl Into<String>) -> CanonicalBodyState {
+        CanonicalBodyState::full_text_merge_v1(text)
+    }
+
+    fn history_from_stored_revision(
+        &self,
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+        conflicted: bool,
+    ) -> RetainedBodyHistoryPayload {
+        RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, conflicted)
+    }
+
+    fn created_history(&self, state: &CanonicalBodyState) -> RetainedBodyHistoryPayload {
+        self.history_from_stored_revision("", state.materialized_text(), false)
+    }
+
+    fn restored_history(
+        &self,
+        current_state: &CanonicalBodyState,
+        target_state: &CanonicalBodyState,
+    ) -> RetainedBodyHistoryPayload {
+        self.history_from_stored_revision(
+            current_state.materialized_text(),
+            target_state.materialized_text(),
+            false,
+        )
     }
 }
 
@@ -192,7 +253,7 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
         if current_text == base_text {
             let canonical_state = CanonicalBodyState::full_text_merge_v1(incoming_text);
             return BodyConvergenceResult {
-                retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                     base_text,
                     canonical_state.materialized_text(),
                     false,
@@ -205,7 +266,7 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
         if incoming_text == base_text || incoming_text == current_text {
             let canonical_state = current_state.clone();
             return BodyConvergenceResult {
-                retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                     base_text,
                     canonical_state.materialized_text(),
                     false,
@@ -228,7 +289,7 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
             );
             let canonical_state = CanonicalBodyState::full_text_merge_v1(merged);
             return BodyConvergenceResult {
-                retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                     base_text,
                     canonical_state.materialized_text(),
                     false,
@@ -245,7 +306,7 @@ impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
         );
         let canonical_state = CanonicalBodyState::full_text_merge_v1(conflicted);
         BodyConvergenceResult {
-            retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+            retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                 base_text,
                 canonical_state.materialized_text(),
                 true,

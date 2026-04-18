@@ -5,7 +5,7 @@ Owns SQLite application of planned workspace rewind changes onto live workspace 
 // @fileimplements PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE_APPLY
 use projector_domain::RestoreWorkspaceRequest;
 
-use crate::storage::body_state::RetainedBodyHistoryPayload;
+use crate::storage::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use crate::storage::sqlite::state::{
     append_body_revision, append_event, append_path_revision, load_required_workspace_state,
     make_event, save_workspace_state,
@@ -68,7 +68,7 @@ pub(super) fn restore_workspace_at_cursor_tx(
                     event.cursor,
                     request.actor_id.clone(),
                     change.document_id.as_str().to_owned(),
-                    &RetainedBodyHistoryPayload::full_text_revision_v1(
+                    &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                         body.base_text,
                         body.body_text,
                         false,

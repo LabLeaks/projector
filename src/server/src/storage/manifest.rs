@@ -11,7 +11,7 @@ use projector_domain::{
     MoveDocumentRequest, ProvenanceEvent, ProvenanceEventKind,
 };
 
-use super::body_state::CanonicalBodyState;
+use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use super::StoreError;
 use super::bodies::{
     document_kind_db_value, file_persist_workspace_snapshot, file_read_workspace_snapshot,
@@ -93,7 +93,8 @@ pub(crate) fn file_create_document(
         deleted: false,
     });
     snapshot.bodies.push(
-        CanonicalBodyState::full_text_merge_v1(request.text.clone())
+        FULL_TEXT_BODY_MODEL
+            .state_from_materialized_text(request.text.clone())
             .into_document_body(document_id.clone()),
     );
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
@@ -123,11 +124,10 @@ pub(crate) fn file_create_document(
             event_cursor,
             request.actor_id.clone(),
             document_id.as_str().to_owned(),
-            &super::body_state::RetainedBodyHistoryPayload::full_text_revision_v1(
-                String::new(),
-                request.text.clone(),
-                false,
-            ),
+            &FULL_TEXT_BODY_MODEL
+                .created_history(&FULL_TEXT_BODY_MODEL.state_from_materialized_text(
+                    request.text.clone(),
+                )),
             now_ms(),
         ),
     )?;
@@ -415,11 +415,10 @@ pub(crate) async fn postgres_create_document(
         document_id.as_str(),
         event_cursor,
         &request.actor_id,
-        &super::body_state::RetainedBodyHistoryPayload::full_text_revision_v1(
-            String::new(),
-            request.text.clone(),
-            false,
-        ),
+        &FULL_TEXT_BODY_MODEL
+            .created_history(&FULL_TEXT_BODY_MODEL.state_from_materialized_text(
+                request.text.clone(),
+            )),
     )
     .await?;
     insert_path_revision_tx(
