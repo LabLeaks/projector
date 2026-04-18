@@ -1,0 +1,376 @@
+/**
+@module PROJECTOR.SERVER.BODY_STATE
+Owns the internal canonical-body-state and retained-body-history abstractions so server storage can evolve beyond plain full-text revisions without changing current client-visible behavior yet.
+*/
+// @fileimplements PROJECTOR.SERVER.BODY_STATE
+use std::path::Path;
+
+use projector_domain::{BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CanonicalBodyStateKind {
+    FullTextMergeV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CanonicalBodyState {
+    kind: CanonicalBodyStateKind,
+    materialized_text: String,
+}
+
+impl CanonicalBodyState {
+    pub(crate) fn full_text_merge_v1(text: impl Into<String>) -> Self {
+        Self {
+            kind: CanonicalBodyStateKind::FullTextMergeV1,
+            materialized_text: text.into(),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> CanonicalBodyStateKind {
+        self.kind
+    }
+
+    pub(crate) fn materialized_text(&self) -> &str {
+        &self.materialized_text
+    }
+
+    pub(crate) fn into_document_body(self, document_id: DocumentId) -> DocumentBody {
+        DocumentBody {
+            document_id,
+            text: self.materialized_text,
+        }
+    }
+}
+
+pub(crate) fn body_state_from_snapshot(
+    snapshot: &BootstrapSnapshot,
+    document_id: &DocumentId,
+) -> Option<CanonicalBodyState> {
+    snapshot
+        .bodies
+        .iter()
+        .find(|body| body.document_id == *document_id)
+        .map(|body| CanonicalBodyState::full_text_merge_v1(body.text.clone()))
+}
+
+pub(crate) fn upsert_body_state(
+    snapshot: &mut BootstrapSnapshot,
+    document_id: &DocumentId,
+    state: &CanonicalBodyState,
+) {
+    if let Some(body) = snapshot
+        .bodies
+        .iter_mut()
+        .find(|body| body.document_id == *document_id)
+    {
+        body.text = state.materialized_text().to_owned();
+    } else {
+        snapshot
+            .bodies
+            .push(state.clone().into_document_body(document_id.clone()));
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RetainedBodyHistoryKind {
+    FullTextRevisionV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RetainedBodyHistoryPayload {
+    kind: RetainedBodyHistoryKind,
+    base_text: String,
+    materialized_text: String,
+    conflicted: bool,
+}
+
+impl RetainedBodyHistoryPayload {
+    pub(crate) fn full_text_revision_v1(
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+        conflicted: bool,
+    ) -> Self {
+        Self {
+            kind: RetainedBodyHistoryKind::FullTextRevisionV1,
+            base_text: base_text.into(),
+            materialized_text: materialized_text.into(),
+            conflicted,
+        }
+    }
+
+    pub(crate) fn base_text(&self) -> &str {
+        &self.base_text
+    }
+
+    pub(crate) fn materialized_text(&self) -> &str {
+        &self.materialized_text
+    }
+
+    pub(crate) fn conflicted(&self) -> bool {
+        self.conflicted
+    }
+
+    pub(crate) fn to_public_revision(
+        &self,
+        seq: u64,
+        actor_id: String,
+        document_id: String,
+        timestamp_ms: u128,
+    ) -> DocumentBodyRevision {
+        DocumentBodyRevision {
+            seq,
+            actor_id,
+            document_id,
+            base_text: self.base_text.clone(),
+            body_text: self.materialized_text.clone(),
+            conflicted: self.conflicted,
+            timestamp_ms,
+        }
+    }
+}
+
+pub(crate) trait BodyConvergenceEngine {
+    fn apply_update(
+        &self,
+        base_text: &str,
+        current_state: &CanonicalBodyState,
+        incoming_text: &str,
+    ) -> BodyConvergenceResult;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BodyConvergenceResult {
+    canonical_state: CanonicalBodyState,
+    retained_history: RetainedBodyHistoryPayload,
+    concurrent: bool,
+}
+
+impl BodyConvergenceResult {
+    pub(crate) fn canonical_state(&self) -> &CanonicalBodyState {
+        &self.canonical_state
+    }
+
+    pub(crate) fn retained_history(&self) -> &RetainedBodyHistoryPayload {
+        &self.retained_history
+    }
+
+    pub(crate) fn summary_for_path(&self, mount_path: &Path, relative_path: &Path) -> String {
+        let display_path = if relative_path.as_os_str().is_empty() {
+            mount_path.display().to_string()
+        } else {
+            mount_path.join(relative_path).display().to_string()
+        };
+        if self.retained_history.conflicted() {
+            return format!(
+                "merged conflicting text update at {display_path} with conflict markers"
+            );
+        }
+        if self.concurrent {
+            return format!("merged concurrent text update at {display_path}");
+        }
+        format!("updated text document at {display_path}")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ThreeWayMergeBodyEngine;
+
+impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
+    fn apply_update(
+        &self,
+        base_text: &str,
+        current_state: &CanonicalBodyState,
+        incoming_text: &str,
+    ) -> BodyConvergenceResult {
+        debug_assert_eq!(
+            current_state.kind(),
+            CanonicalBodyStateKind::FullTextMergeV1,
+            "current server code only converges full-text merge body state",
+        );
+        let current_text = current_state.materialized_text();
+
+        if current_text == base_text {
+            let canonical_state = CanonicalBodyState::full_text_merge_v1(incoming_text);
+            return BodyConvergenceResult {
+                retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                    base_text,
+                    canonical_state.materialized_text(),
+                    false,
+                ),
+                canonical_state,
+                concurrent: false,
+            };
+        }
+
+        if incoming_text == base_text || incoming_text == current_text {
+            let canonical_state = current_state.clone();
+            return BodyConvergenceResult {
+                retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                    base_text,
+                    canonical_state.materialized_text(),
+                    false,
+                ),
+                canonical_state,
+                concurrent: true,
+            };
+        }
+
+        let current_span = change_span(base_text, current_text);
+        let incoming_span = change_span(base_text, incoming_text);
+
+        if ranges_do_not_overlap(&current_span, &incoming_span) {
+            let merged = apply_non_overlapping_replacements(
+                base_text,
+                current_text,
+                incoming_text,
+                &current_span,
+                &incoming_span,
+            );
+            let canonical_state = CanonicalBodyState::full_text_merge_v1(merged);
+            return BodyConvergenceResult {
+                retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                    base_text,
+                    canonical_state.materialized_text(),
+                    false,
+                ),
+                canonical_state,
+                concurrent: true,
+            };
+        }
+
+        let conflicted = format!(
+            "<<<<<<< existing\n{}=======\n{}>>>>>>> incoming\n",
+            ensure_trailing_newline(current_text),
+            ensure_trailing_newline(incoming_text),
+        );
+        let canonical_state = CanonicalBodyState::full_text_merge_v1(conflicted);
+        BodyConvergenceResult {
+            retained_history: RetainedBodyHistoryPayload::full_text_revision_v1(
+                base_text,
+                canonical_state.materialized_text(),
+                true,
+            ),
+            canonical_state,
+            concurrent: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ChangeSpan {
+    start: usize,
+    end: usize,
+}
+
+fn change_span(base: &str, variant: &str) -> ChangeSpan {
+    let prefix = common_prefix_len(base, variant);
+    let suffix = common_suffix_len(&base[prefix..], &variant[prefix..]);
+    ChangeSpan {
+        start: prefix,
+        end: base.len().saturating_sub(suffix),
+    }
+}
+
+fn ranges_do_not_overlap(left: &ChangeSpan, right: &ChangeSpan) -> bool {
+    left.end <= right.start || right.end <= left.start
+}
+
+fn apply_non_overlapping_replacements(
+    base: &str,
+    current: &str,
+    incoming: &str,
+    current_span: &ChangeSpan,
+    incoming_span: &ChangeSpan,
+) -> String {
+    let (first_span, first_variant, second_span, second_variant) =
+        if current_span.start <= incoming_span.start {
+            (current_span, current, incoming_span, incoming)
+        } else {
+            (incoming_span, incoming, current_span, current)
+        };
+
+    let mut merged = String::new();
+    merged.push_str(&base[..first_span.start]);
+    merged.push_str(&first_variant[first_span.start..variant_end(first_variant, base, first_span)]);
+    merged.push_str(&base[first_span.end..second_span.start]);
+    merged.push_str(
+        &second_variant[second_span.start..variant_end(second_variant, base, second_span)],
+    );
+    merged.push_str(&base[second_span.end..]);
+    merged
+}
+
+fn variant_end(variant: &str, base: &str, span: &ChangeSpan) -> usize {
+    let prefix = span.start;
+    let suffix = common_suffix_len(&base[prefix..], &variant[prefix..]);
+    variant.len().saturating_sub(suffix)
+}
+
+fn common_prefix_len(left: &str, right: &str) -> usize {
+    let mut total = 0;
+    for (left_char, right_char) in left.chars().zip(right.chars()) {
+        if left_char != right_char {
+            break;
+        }
+        total += left_char.len_utf8();
+    }
+    total
+}
+
+fn common_suffix_len(left: &str, right: &str) -> usize {
+    let mut total = 0;
+    for (left_char, right_char) in left.chars().rev().zip(right.chars().rev()) {
+        if left_char != right_char {
+            break;
+        }
+        total += left_char.len_utf8();
+        if total >= left.len() || total >= right.len() {
+            break;
+        }
+    }
+    total.min(left.len()).min(right.len())
+}
+
+fn ensure_trailing_newline(text: &str) -> String {
+    if text.ends_with('\n') {
+        text.to_owned()
+    } else {
+        format!("{text}\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BodyConvergenceEngine, CanonicalBodyState, ThreeWayMergeBodyEngine};
+
+    #[test]
+    fn three_way_engine_merges_non_overlapping_edits() {
+        let engine = ThreeWayMergeBodyEngine;
+        let current_state = CanonicalBodyState::full_text_merge_v1("alpha\nbeta changed\ngamma\n");
+        let result = engine.apply_update(
+            "alpha\nbeta\ngamma\n",
+            &current_state,
+            "alpha\nbeta\nGAMMA changed\n",
+        );
+
+        assert_eq!(
+            result.canonical_state().materialized_text(),
+            "alpha\nbeta changed\nGAMMA changed\n"
+        );
+        assert!(!result.retained_history().conflicted());
+    }
+
+    #[test]
+    fn three_way_engine_emits_conflict_markers_for_overlapping_edits() {
+        let engine = ThreeWayMergeBodyEngine;
+        let current_state = CanonicalBodyState::full_text_merge_v1("alpha\nBETA\ngamma\n");
+        let result = engine.apply_update(
+            "alpha\nbeta\ngamma\n",
+            &current_state,
+            "alpha\nBETTER\ngamma\n",
+        );
+
+        assert!(result.retained_history().conflicted());
+        assert!(result.canonical_state().materialized_text().contains("<<<<<<< existing"));
+    }
+}

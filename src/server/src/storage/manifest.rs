@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::{
-    CreateDocumentRequest, DeleteDocumentRequest, DocumentBody, DocumentId, DocumentKind,
-    ManifestEntry, MoveDocumentRequest, ProvenanceEvent, ProvenanceEventKind,
+    CreateDocumentRequest, DeleteDocumentRequest, DocumentId, DocumentKind, ManifestEntry,
+    MoveDocumentRequest, ProvenanceEvent, ProvenanceEventKind,
 };
 
+use super::body_state::CanonicalBodyState;
 use super::StoreError;
 use super::bodies::{
     document_kind_db_value, file_persist_workspace_snapshot, file_read_workspace_snapshot,
@@ -91,10 +92,10 @@ pub(crate) fn file_create_document(
         kind: DocumentKind::Text,
         deleted: false,
     });
-    snapshot.bodies.push(DocumentBody {
-        document_id: document_id.clone(),
-        text: request.text.clone(),
-    });
+    snapshot.bodies.push(
+        CanonicalBodyState::full_text_merge_v1(request.text.clone())
+            .into_document_body(document_id.clone()),
+    );
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
     file_append_workspace_event(
@@ -117,16 +118,18 @@ pub(crate) fn file_create_document(
     file_append_body_revision(
         state_dir,
         &request.workspace_id,
-        FileBodyRevision {
-            seq: event_cursor,
-            workspace_cursor: event_cursor,
-            actor_id: request.actor_id.clone(),
-            document_id: document_id.as_str().to_owned(),
-            base_text: String::new(),
-            body_text: request.text.clone(),
-            conflicted: false,
-            timestamp_ms: now_ms(),
-        },
+        FileBodyRevision::from_retained_history(
+            event_cursor,
+            event_cursor,
+            request.actor_id.clone(),
+            document_id.as_str().to_owned(),
+            &super::body_state::RetainedBodyHistoryPayload::full_text_revision_v1(
+                String::new(),
+                request.text.clone(),
+                false,
+            ),
+            now_ms(),
+        ),
     )?;
     file_append_path_revision(
         state_dir,
@@ -412,9 +415,11 @@ pub(crate) async fn postgres_create_document(
         document_id.as_str(),
         event_cursor,
         &request.actor_id,
-        "",
-        &request.text,
-        false,
+        &super::body_state::RetainedBodyHistoryPayload::full_text_revision_v1(
+            String::new(),
+            request.text.clone(),
+            false,
+        ),
     )
     .await?;
     insert_path_revision_tx(

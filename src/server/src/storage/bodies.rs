@@ -9,11 +9,15 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::{
-    BootstrapSnapshot, DocumentBody, DocumentId, DocumentKind, ManifestEntry, ManifestState,
+    BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState,
     ProvenanceEvent, ProvenanceEventKind, RestoreDocumentBodyRevisionRequest,
     UpdateDocumentRequest,
 };
 
+use super::body_state::{
+    BodyConvergenceEngine, CanonicalBodyState, RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
+    body_state_from_snapshot, upsert_body_state,
+};
 use super::StoreError;
 use super::history::{
     FileBodyRevision, file_append_body_revision, file_read_body_revisions, insert_body_revision_tx,
@@ -66,26 +70,11 @@ pub(crate) fn file_update_document(
         )));
     }
 
-    let current_text = snapshot
-        .bodies
-        .iter()
-        .find(|body| body.document_id == document_id)
-        .map(|body| body.text.clone())
-        .unwrap_or_default();
-    let merge = merge_text_update(&request.base_text, &current_text, &request.text);
+    let current_state = body_state_from_snapshot(&snapshot, &document_id)
+        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+    let merge = merge_text_update(&request.base_text, &current_state, &request.text);
 
-    if let Some(body) = snapshot
-        .bodies
-        .iter_mut()
-        .find(|body| body.document_id == document_id)
-    {
-        body.text = merge.text.clone();
-    } else {
-        snapshot.bodies.push(DocumentBody {
-            document_id: document_id.clone(),
-            text: merge.text.clone(),
-        });
-    }
+    upsert_body_state(&mut snapshot, &document_id, merge.canonical_state());
     let Some(entry) = snapshot
         .manifest
         .entries
@@ -117,16 +106,14 @@ pub(crate) fn file_update_document(
     file_append_body_revision(
         state_dir,
         &request.workspace_id,
-        FileBodyRevision {
-            seq: event_cursor,
-            workspace_cursor: event_cursor,
-            actor_id: request.actor_id.clone(),
-            document_id: request.document_id.clone(),
-            base_text: request.base_text.clone(),
-            body_text: merge.text.clone(),
-            conflicted: merge.conflicted,
-            timestamp_ms: now_ms(),
-        },
+        FileBodyRevision::from_retained_history(
+            event_cursor,
+            event_cursor,
+            request.actor_id.clone(),
+            request.document_id.clone(),
+            merge.retained_history(),
+            now_ms(),
+        ),
     )?;
     Ok(())
 }
@@ -189,29 +176,18 @@ pub(crate) fn file_restore_document_body_revision(
                 request.document_id, request.seq
             ))
         })?;
+    let current_state = body_state_from_snapshot(&snapshot, &document_id)
+        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
 
-    let current_text = snapshot
-        .bodies
-        .iter()
-        .find(|body| body.document_id == document_id)
-        .map(|body| body.text.clone())
-        .unwrap_or_default();
     snapshot.manifest.entries[entry_index].deleted = false;
     snapshot.manifest.entries[entry_index].mount_relative_path = target_mount_relative_path.clone();
     snapshot.manifest.entries[entry_index].relative_path = target_relative_path.clone();
 
-    if let Some(body) = snapshot
-        .bodies
-        .iter_mut()
-        .find(|body| body.document_id == document_id)
-    {
-        body.text = target_revision.body_text.clone();
-    } else {
-        snapshot.bodies.push(DocumentBody {
-            document_id: document_id.clone(),
-            text: target_revision.body_text.clone(),
-        });
-    }
+    upsert_body_state(
+        &mut snapshot,
+        &document_id,
+        &target_revision.materialized_body_state(),
+    );
 
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
     let event_cursor =
@@ -238,16 +214,18 @@ pub(crate) fn file_restore_document_body_revision(
     file_append_body_revision(
         state_dir,
         &request.workspace_id,
-        FileBodyRevision {
-            seq: event_cursor,
-            workspace_cursor: event_cursor,
-            actor_id: request.actor_id.clone(),
-            document_id: request.document_id.clone(),
-            base_text: current_text,
-            body_text: target_revision.body_text,
-            conflicted: false,
-            timestamp_ms: now_ms(),
-        },
+        FileBodyRevision::from_retained_history(
+            event_cursor,
+            event_cursor,
+            request.actor_id.clone(),
+            request.document_id.clone(),
+            &RetainedBodyHistoryPayload::full_text_revision_v1(
+                current_state.materialized_text().to_owned(),
+                target_revision.materialized_body_state().materialized_text().to_owned(),
+                false,
+            ),
+            now_ms(),
+        ),
     )?;
     if entry.deleted
         || target_mount_relative_path != entry.mount_relative_path
@@ -291,15 +269,16 @@ pub(crate) async fn postgres_update_document(
     };
     let mount_path = path_row.get::<_, String>("mount_path");
     let relative_path = path_row.get::<_, String>("relative_path");
-    let current_text = transaction
+    let current_state = transaction
         .query_opt(
             "select body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
             &[&request.workspace_id, &request.document_id],
         )
         .await?
-        .map(|row| row.get::<_, String>("body_text"))
-        .unwrap_or_default();
-    let merge = merge_text_update(&request.base_text, &current_text, &request.text);
+        .map(|row| CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text")))
+        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+    let merge = merge_text_update(&request.base_text, &current_state, &request.text);
+    let merged_text = merge.canonical_state().materialized_text().to_owned();
 
     transaction
         .execute(
@@ -307,7 +286,7 @@ pub(crate) async fn postgres_update_document(
              (document_id, workspace_id, body_text, compacted_through_seq) \
              values ($1, $2, $3, 0) \
              on conflict (document_id) do update set body_text = excluded.body_text, updated_at = now()",
-            &[&request.document_id, &request.workspace_id, &merge.text],
+            &[&request.document_id, &request.workspace_id, &merged_text],
         )
         .await?;
     let event_cursor = insert_event_tx(
@@ -327,9 +306,7 @@ pub(crate) async fn postgres_update_document(
         &request.document_id,
         event_cursor,
         &request.actor_id,
-        &request.base_text,
-        &merge.text,
-        merge.conflicted,
+        merge.retained_history(),
     )
     .await?;
 
@@ -404,14 +381,14 @@ pub(crate) async fn postgres_restore_document_body_revision(
             ));
         }
     }
-    let current_text = transaction
+    let current_state = transaction
         .query_opt(
             "select body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
             &[&request.workspace_id, &request.document_id],
         )
         .await?
-        .map(|row| row.get::<_, String>("body_text"))
-        .unwrap_or_default();
+        .map(|row| CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text")))
+        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
     let target_text = transaction
         .query_opt(
             "select body_text from document_body_revisions \
@@ -474,9 +451,11 @@ pub(crate) async fn postgres_restore_document_body_revision(
         &request.document_id,
         event_cursor,
         &request.actor_id,
-        &current_text,
-        &target_text,
-        false,
+        &RetainedBodyHistoryPayload::full_text_revision_v1(
+            current_state.materialized_text().to_owned(),
+            target_text,
+            false,
+        ),
     )
     .await?;
     if was_deleted || target_mount_path != mount_path || target_relative_path != relative_path {
@@ -560,10 +539,10 @@ where
             deleted,
         });
         if !deleted {
-            snapshot.bodies.push(DocumentBody {
-                document_id,
-                text: row.get::<_, String>("body_text"),
-            });
+            snapshot.bodies.push(
+                CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text"))
+                    .into_document_body(document_id),
+            );
         }
     }
 
@@ -577,155 +556,26 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
-pub(crate) struct MergeTextUpdate {
-    pub(crate) text: String,
-    concurrent: bool,
-    pub(crate) conflicted: bool,
-}
+pub(crate) struct MergeTextUpdate(super::body_state::BodyConvergenceResult);
 
 impl MergeTextUpdate {
+    pub(crate) fn canonical_state(&self) -> &CanonicalBodyState {
+        self.0.canonical_state()
+    }
+
+    pub(crate) fn retained_history(&self) -> &RetainedBodyHistoryPayload {
+        self.0.retained_history()
+    }
+
     pub(crate) fn summary_for_path(&self, mount_path: &Path, relative_path: &Path) -> String {
-        let display_path = if relative_path.as_os_str().is_empty() {
-            mount_path.display().to_string()
-        } else {
-            mount_path.join(relative_path).display().to_string()
-        };
-        if self.conflicted {
-            return format!(
-                "merged conflicting text update at {display_path} with conflict markers"
-            );
-        }
-        if self.concurrent {
-            return format!("merged concurrent text update at {display_path}");
-        }
-        format!("updated text document at {display_path}")
+        self.0.summary_for_path(mount_path, relative_path)
     }
 }
 
-pub(crate) fn merge_text_update(base: &str, current: &str, incoming: &str) -> MergeTextUpdate {
-    if current == base {
-        return MergeTextUpdate {
-            text: incoming.to_owned(),
-            concurrent: false,
-            conflicted: false,
-        };
-    }
-
-    if incoming == base || incoming == current {
-        return MergeTextUpdate {
-            text: current.to_owned(),
-            concurrent: true,
-            conflicted: false,
-        };
-    }
-
-    let current_span = change_span(base, current);
-    let incoming_span = change_span(base, incoming);
-
-    if ranges_do_not_overlap(&current_span, &incoming_span) {
-        return MergeTextUpdate {
-            text: apply_non_overlapping_replacements(
-                base,
-                current,
-                incoming,
-                &current_span,
-                &incoming_span,
-            ),
-            concurrent: true,
-            conflicted: false,
-        };
-    }
-
-    MergeTextUpdate {
-        text: format!(
-            "<<<<<<< existing\n{}=======\n{}>>>>>>> incoming\n",
-            ensure_trailing_newline(current),
-            ensure_trailing_newline(incoming),
-        ),
-        concurrent: true,
-        conflicted: true,
-    }
-}
-
-#[derive(Clone, Copy)]
-struct ChangeSpan {
-    start: usize,
-    end: usize,
-}
-
-fn change_span(base: &str, variant: &str) -> ChangeSpan {
-    let prefix = common_prefix_len(base, variant);
-    let suffix = common_suffix_len(&base[prefix..], &variant[prefix..]);
-    ChangeSpan {
-        start: prefix,
-        end: base.len().saturating_sub(suffix),
-    }
-}
-
-fn ranges_do_not_overlap(left: &ChangeSpan, right: &ChangeSpan) -> bool {
-    left.end <= right.start || right.end <= left.start
-}
-
-fn apply_non_overlapping_replacements(
+pub(crate) fn merge_text_update(
     base: &str,
-    current: &str,
+    current: &CanonicalBodyState,
     incoming: &str,
-    current_span: &ChangeSpan,
-    incoming_span: &ChangeSpan,
-) -> String {
-    let (first_span, first_variant, second_span, second_variant) =
-        if current_span.start <= incoming_span.start {
-            (current_span, current, incoming_span, incoming)
-        } else {
-            (incoming_span, incoming, current_span, current)
-        };
-
-    let mut merged = String::new();
-    merged.push_str(&base[..first_span.start]);
-    merged.push_str(&first_variant[first_span.start..variant_end(first_variant, base, first_span)]);
-    merged.push_str(&base[first_span.end..second_span.start]);
-    merged.push_str(
-        &second_variant[second_span.start..variant_end(second_variant, base, second_span)],
-    );
-    merged.push_str(&base[second_span.end..]);
-    merged
-}
-
-fn variant_end(variant: &str, base: &str, span: &ChangeSpan) -> usize {
-    let prefix = span.start;
-    let suffix = common_suffix_len(&base[prefix..], &variant[prefix..]);
-    variant.len().saturating_sub(suffix)
-}
-
-fn common_prefix_len(left: &str, right: &str) -> usize {
-    let mut total = 0;
-    for (left_char, right_char) in left.chars().zip(right.chars()) {
-        if left_char != right_char {
-            break;
-        }
-        total += left_char.len_utf8();
-    }
-    total
-}
-
-fn common_suffix_len(left: &str, right: &str) -> usize {
-    let mut total = 0;
-    for (left_char, right_char) in left.chars().rev().zip(right.chars().rev()) {
-        if left_char != right_char {
-            break;
-        }
-        total += left_char.len_utf8();
-        if total >= left.len() || total >= right.len() {
-            break;
-        }
-    }
-    total.min(left.len()).min(right.len())
-}
-
-fn ensure_trailing_newline(text: &str) -> String {
-    if text.ends_with('\n') {
-        text.to_owned()
-    } else {
-        format!("{text}\n")
-    }
+) -> MergeTextUpdate {
+    MergeTextUpdate(ThreeWayMergeBodyEngine.apply_update(base, current, incoming))
 }

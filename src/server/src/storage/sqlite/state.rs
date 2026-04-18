@@ -6,9 +6,9 @@ Owns the SQLite schema, workspace row persistence, append-only row writes, and s
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::super::body_state::CanonicalBodyState;
 use projector_domain::{
-    BootstrapSnapshot, DocumentBody, DocumentId, ProvenanceEvent, ProvenanceEventKind,
-    SyncEntryKind,
+    BootstrapSnapshot, DocumentId, ProvenanceEvent, ProvenanceEventKind, SyncEntryKind,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -172,18 +172,21 @@ pub(super) fn make_event(
     }
 }
 
-pub(super) fn upsert_body(snapshot: &mut BootstrapSnapshot, document_id: &DocumentId, text: &str) {
+pub(super) fn upsert_body_state(
+    snapshot: &mut BootstrapSnapshot,
+    document_id: &DocumentId,
+    state: &CanonicalBodyState,
+) {
     if let Some(body) = snapshot
         .bodies
         .iter_mut()
         .find(|body| body.document_id == *document_id)
     {
-        body.text = text.to_owned();
+        body.text = state.materialized_text().to_owned();
     } else {
-        snapshot.bodies.push(DocumentBody {
-            document_id: document_id.clone(),
-            text: text.to_owned(),
-        });
+        snapshot
+            .bodies
+            .push(state.clone().into_document_body(document_id.clone()));
     }
 }
 

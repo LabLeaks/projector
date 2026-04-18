@@ -6,15 +6,18 @@ Owns SQLite manifest and body mutation transactions for document create, update,
 use std::path::PathBuf;
 
 use projector_domain::{
-    CreateDocumentRequest, DeleteDocumentRequest, DocumentBody, DocumentId, DocumentKind,
-    ManifestEntry, MoveDocumentRequest, ProvenanceEventKind, UpdateDocumentRequest,
+    CreateDocumentRequest, DeleteDocumentRequest, DocumentId, DocumentKind, ManifestEntry,
+    MoveDocumentRequest, ProvenanceEventKind, UpdateDocumentRequest,
 };
 
 use super::super::StoreError;
-use super::super::bodies::merge_text_update;
+use super::super::body_state::{
+    BodyConvergenceEngine, CanonicalBodyState, ThreeWayMergeBodyEngine, body_state_from_snapshot,
+};
 use super::state::{
     append_body_revision, append_event, append_path_revision, display_document_path,
-    load_required_workspace_state, make_document_id, make_event, save_workspace_state, upsert_body,
+    load_required_workspace_state, make_document_id, make_event, save_workspace_state,
+    upsert_body_state,
 };
 
 pub(super) fn create_document_tx(
@@ -54,10 +57,10 @@ pub(super) fn create_document_tx(
         kind: DocumentKind::Text,
         deleted: false,
     });
-    state.snapshot.bodies.push(DocumentBody {
-        document_id: document_id.clone(),
-        text: request.text.clone(),
-    });
+    state.snapshot.bodies.push(
+        CanonicalBodyState::full_text_merge_v1(request.text.clone())
+            .into_document_body(document_id.clone()),
+    );
 
     let event = make_event(
         &mut state,
@@ -76,16 +79,18 @@ pub(super) fn create_document_tx(
     append_body_revision(
         transaction,
         &request.workspace_id,
-        &super::super::history::FileBodyRevision {
-            seq: event.cursor,
-            workspace_cursor: event.cursor,
-            actor_id: request.actor_id.clone(),
-            document_id: document_id.as_str().to_owned(),
-            base_text: String::new(),
-            body_text: request.text.clone(),
-            conflicted: false,
-            timestamp_ms: event.timestamp_ms,
-        },
+        &super::super::history::FileBodyRevision::from_retained_history(
+            event.cursor,
+            event.cursor,
+            request.actor_id.clone(),
+            document_id.as_str().to_owned(),
+            &super::super::body_state::RetainedBodyHistoryPayload::full_text_revision_v1(
+                String::new(),
+                request.text.clone(),
+                false,
+            ),
+            event.timestamp_ms,
+        ),
     )?;
     append_path_revision(
         transaction,
@@ -125,15 +130,10 @@ pub(super) fn update_document_tx(
         )));
     };
 
-    let current_text = state
-        .snapshot
-        .bodies
-        .iter()
-        .find(|body| body.document_id == document_id)
-        .map(|body| body.text.clone())
-        .unwrap_or_default();
-    let merge = merge_text_update(&request.base_text, &current_text, &request.text);
-    upsert_body(&mut state.snapshot, &document_id, &merge.text);
+    let current_state = body_state_from_snapshot(&state.snapshot, &document_id)
+        .unwrap_or_else(|| CanonicalBodyState::full_text_merge_v1(String::new()));
+    let merge = ThreeWayMergeBodyEngine.apply_update(&request.base_text, &current_state, &request.text);
+    upsert_body_state(&mut state.snapshot, &document_id, merge.canonical_state());
 
     let event = make_event(
         &mut state,
@@ -149,16 +149,14 @@ pub(super) fn update_document_tx(
     append_body_revision(
         transaction,
         &request.workspace_id,
-        &super::super::history::FileBodyRevision {
-            seq: event.cursor,
-            workspace_cursor: event.cursor,
-            actor_id: request.actor_id.clone(),
-            document_id: request.document_id.clone(),
-            base_text: request.base_text.clone(),
-            body_text: merge.text,
-            conflicted: merge.conflicted,
-            timestamp_ms: event.timestamp_ms,
-        },
+        &super::super::history::FileBodyRevision::from_retained_history(
+            event.cursor,
+            event.cursor,
+            request.actor_id.clone(),
+            request.document_id.clone(),
+            merge.retained_history(),
+            event.timestamp_ms,
+        ),
     )
 }
 

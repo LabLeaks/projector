@@ -1604,7 +1604,7 @@ fn deploy_defaults_remote_byo_setup_to_sqlite() {
         std::env::var("PATH").expect("path env")
     );
     let projector_home_str = projector_home.to_str().expect("projector home utf8");
-    let output = run_projector_with_env(
+    let output = run_projector_tty_with_env(
         &repo,
         &[
             "deploy",
@@ -1612,16 +1612,16 @@ fn deploy_defaults_remote_byo_setup_to_sqlite() {
             "homebox",
             "--ssh",
             "user@127.0.0.1",
-            "--yes",
         ],
+        "\n\n\n\ny\n",
         &[("PROJECTOR_HOME", projector_home_str), ("PATH", &path_env)],
     );
 
-    assert!(output.contains("backend: sqlite"));
-    assert!(output.contains("server_addr: 127.0.0.1:8942"));
-    assert!(output.contains("remote_dir: ~/.projector"));
-    assert!(output.contains("sqlite_path: ~/.projector/projector.sqlite3"));
-    assert!(output.contains("listen_addr: 0.0.0.0:8942"));
+    assert!(output.contains("deploy_backend: sqlite"));
+    assert!(output.contains("deploy_server_addr: 127.0.0.1:8942"));
+    assert!(output.contains("deploy_remote_dir: ~/.projector"));
+    assert!(output.contains("deploy_sqlite_path: ~/.projector/projector.sqlite3"));
+    assert!(output.contains("deploy_listen_addr: 0.0.0.0:8942"));
 }
 
 // @verifies PROJECTOR.CLI.DEPLOY.REGISTERS_SERVER_PROFILE

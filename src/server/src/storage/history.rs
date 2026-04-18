@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::Client;
 
+use super::body_state::{CanonicalBodyState, RetainedBodyHistoryPayload};
 use super::StoreError;
 use super::bodies::{file_persist_workspace_snapshot, file_read_workspace_snapshot};
 use super::provenance::{
@@ -18,9 +19,8 @@ use super::provenance::{
 };
 use super::workspaces::workspace_dir;
 use projector_domain::{
-    BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId, DocumentKind,
-    DocumentPathRevision, ManifestEntry, ManifestState, ProvenanceEvent, ProvenanceEventKind,
-    RestoreWorkspaceRequest,
+    BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathRevision,
+    ManifestEntry, ManifestState, ProvenanceEvent, ProvenanceEventKind, RestoreWorkspaceRequest,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -34,6 +34,49 @@ pub(crate) struct FileBodyRevision {
     pub body_text: String,
     pub conflicted: bool,
     pub timestamp_ms: u128,
+}
+
+impl FileBodyRevision {
+    pub(crate) fn from_retained_history(
+        seq: u64,
+        workspace_cursor: u64,
+        actor_id: impl Into<String>,
+        document_id: impl Into<String>,
+        payload: &RetainedBodyHistoryPayload,
+        timestamp_ms: u128,
+    ) -> Self {
+        Self {
+            seq,
+            workspace_cursor,
+            actor_id: actor_id.into(),
+            document_id: document_id.into(),
+            base_text: payload.base_text().to_owned(),
+            body_text: payload.materialized_text().to_owned(),
+            conflicted: payload.conflicted(),
+            timestamp_ms,
+        }
+    }
+
+    pub(crate) fn retained_history(&self) -> RetainedBodyHistoryPayload {
+        RetainedBodyHistoryPayload::full_text_revision_v1(
+            self.base_text.clone(),
+            self.body_text.clone(),
+            self.conflicted,
+        )
+    }
+
+    pub(crate) fn materialized_body_state(&self) -> CanonicalBodyState {
+        CanonicalBodyState::full_text_merge_v1(self.body_text.clone())
+    }
+
+    pub(crate) fn to_public_revision(&self) -> DocumentBodyRevision {
+        self.retained_history().to_public_revision(
+            self.seq,
+            self.actor_id.clone(),
+            self.document_id.clone(),
+            self.timestamp_ms,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -103,15 +146,7 @@ pub(crate) fn file_list_body_revisions(
     let mut revisions = file_read_body_revisions(state_dir, workspace_id)?
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
-        .map(|revision| DocumentBodyRevision {
-            seq: revision.seq,
-            actor_id: revision.actor_id,
-            document_id: revision.document_id,
-            base_text: revision.base_text,
-            body_text: revision.body_text,
-            conflicted: revision.conflicted,
-            timestamp_ms: revision.timestamp_ms,
-        })
+        .map(|revision| revision.to_public_revision())
         .collect::<Vec<_>>();
     if revisions.len() > limit {
         revisions = revisions.split_off(revisions.len() - limit);
@@ -280,9 +315,10 @@ pub(crate) fn file_reconstruct_workspace_at_cursor(
         .filter_map(|entry| {
             latest_bodies
                 .get(entry.document_id.as_str())
-                .map(|revision| DocumentBody {
-                    document_id: entry.document_id.clone(),
-                    text: revision.body_text.clone(),
+                .map(|revision| {
+                    revision
+                        .materialized_body_state()
+                        .into_document_body(entry.document_id.clone())
                 })
         })
         .collect::<Vec<_>>();
@@ -346,16 +382,18 @@ pub(crate) fn file_restore_workspace_at_cursor(
             file_append_body_revision(
                 state_dir,
                 &request.workspace_id,
-                FileBodyRevision {
-                    seq: event_cursor,
-                    workspace_cursor: event_cursor,
-                    actor_id: request.actor_id.clone(),
-                    document_id: change.document_id.as_str().to_owned(),
-                    base_text: body.base_text,
-                    body_text: body.body_text,
-                    conflicted: false,
-                    timestamp_ms: current_time_ms(),
-                },
+                FileBodyRevision::from_retained_history(
+                    event_cursor,
+                    event_cursor,
+                    request.actor_id.clone(),
+                    change.document_id.as_str().to_owned(),
+                    &RetainedBodyHistoryPayload::full_text_revision_v1(
+                        body.base_text,
+                        body.body_text,
+                        false,
+                    ),
+                    current_time_ms(),
+                ),
             )?;
         }
         file_append_path_revision(
@@ -384,9 +422,7 @@ pub(crate) async fn insert_body_revision_tx(
     document_id: &str,
     workspace_cursor: u64,
     actor_id: &str,
-    base_text: &str,
-    body_text: &str,
-    conflicted: bool,
+    payload: &RetainedBodyHistoryPayload,
 ) -> Result<(), StoreError> {
     transaction
         .execute(
@@ -398,9 +434,9 @@ pub(crate) async fn insert_body_revision_tx(
                 &document_id,
                 &(workspace_cursor as i64),
                 &actor_id,
-                &base_text,
-                &body_text,
-                &conflicted,
+                &payload.base_text(),
+                &payload.materialized_text(),
+                &payload.conflicted(),
             ],
         )
         .await?;
@@ -458,14 +494,18 @@ pub(crate) async fn postgres_list_body_revisions(
         .await?;
     let mut revisions = rows
         .into_iter()
-        .map(|row| DocumentBodyRevision {
-            seq: row.get::<_, i64>("seq") as u64,
-            actor_id: row.get::<_, String>("actor_id"),
-            document_id: row.get::<_, String>("document_id"),
-            base_text: row.get::<_, String>("base_text"),
-            body_text: row.get::<_, String>("body_text"),
-            conflicted: row.get::<_, bool>("conflicted"),
-            timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+        .map(|row| {
+            RetainedBodyHistoryPayload::full_text_revision_v1(
+                row.get::<_, String>("base_text"),
+                row.get::<_, String>("body_text"),
+                row.get::<_, bool>("conflicted"),
+            )
+            .to_public_revision(
+                row.get::<_, i64>("seq") as u64,
+                row.get::<_, String>("actor_id"),
+                row.get::<_, String>("document_id"),
+                row.get::<_, i64>("timestamp_ms") as u128,
+            )
         })
         .collect::<Vec<_>>();
     revisions.reverse();
@@ -589,9 +629,9 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
         .filter_map(|entry| {
             body_map
                 .get(entry.document_id.as_str())
-                .map(|text| DocumentBody {
-                    document_id: entry.document_id.clone(),
-                    text: text.clone(),
+                .map(|text| {
+                    CanonicalBodyState::full_text_merge_v1(text.clone())
+                        .into_document_body(entry.document_id.clone())
                 })
         })
         .collect::<Vec<_>>();
@@ -692,7 +732,11 @@ pub(crate) async fn postgres_restore_workspace_at_cursor(
                  (document_id, workspace_id, body_text, compacted_through_seq) \
                  values ($1, $2, $3, 0) \
                  on conflict (document_id) do update set body_text = excluded.body_text, updated_at = now()",
-                &[&body.document_id.as_str(), &request.workspace_id, &body.text],
+                &[
+                    &body.document_id.as_str(),
+                    &request.workspace_id,
+                    &CanonicalBodyState::full_text_merge_v1(body.text.clone()).materialized_text(),
+                ],
             )
             .await?;
     }
@@ -716,9 +760,11 @@ pub(crate) async fn postgres_restore_workspace_at_cursor(
                 change.document_id.as_str(),
                 event_cursor,
                 &request.actor_id,
-                &body.base_text,
-                &body.body_text,
-                false,
+                &RetainedBodyHistoryPayload::full_text_revision_v1(
+                    body.base_text,
+                    body.body_text,
+                    false,
+                ),
             )
             .await?;
         }
@@ -777,10 +823,10 @@ async fn postgres_current_workspace_snapshot(
             deleted,
         });
         if !deleted {
-            snapshot.bodies.push(DocumentBody {
-                document_id,
-                text: row.get::<_, String>("body_text"),
-            });
+            snapshot.bodies.push(
+                CanonicalBodyState::full_text_merge_v1(row.get::<_, String>("body_text"))
+                    .into_document_body(document_id),
+            );
         }
     }
     Ok(snapshot)

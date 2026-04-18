@@ -6,7 +6,7 @@ Owns SQLite reconstruction of a workspace snapshot at a historical cursor from a
 use std::collections::HashMap;
 
 use projector_domain::{
-    BootstrapSnapshot, DocumentBody, DocumentId, DocumentKind, ManifestEntry, ManifestState,
+    BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState,
 };
 
 use crate::storage::sqlite::history::{read_body_revisions, read_path_history};
@@ -47,9 +47,10 @@ pub(super) fn reconstruct_workspace_at_cursor(
         .filter_map(|entry| {
             latest_bodies
                 .get(entry.document_id.as_str())
-                .map(|revision| DocumentBody {
-                    document_id: entry.document_id.clone(),
-                    text: revision.body_text.clone(),
+                .map(|revision| {
+                    revision
+                        .materialized_body_state()
+                        .into_document_body(entry.document_id.clone())
                 })
         })
         .collect::<Vec<_>>();

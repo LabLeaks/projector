@@ -88,15 +88,7 @@ pub(super) fn list_body_revisions(
     let mut revisions = read_body_revisions(connection, workspace_id)?
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
-        .map(|revision| DocumentBodyRevision {
-            seq: revision.seq,
-            actor_id: revision.actor_id,
-            document_id: revision.document_id,
-            base_text: revision.base_text,
-            body_text: revision.body_text,
-            conflicted: revision.conflicted,
-            timestamp_ms: revision.timestamp_ms,
-        })
+        .map(|revision| revision.to_public_revision())
         .collect::<Vec<_>>();
     if revisions.len() > limit {
         revisions = revisions.split_off(revisions.len() - limit);

@@ -4,6 +4,7 @@ Coordinates the store contract, error model, and backend store implementations o
 */
 // @fileimplements PROJECTOR.SERVER.STORAGE
 mod bodies;
+mod body_state;
 mod contract;
 mod error;
 mod file_store;

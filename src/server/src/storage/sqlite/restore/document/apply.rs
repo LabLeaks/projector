@@ -5,9 +5,10 @@ Owns SQLite document-restore mutation and append-only history writes after a res
 // @fileimplements PROJECTOR.SERVER.SQLITE_DOCUMENT_RESTORE_APPLY
 use projector_domain::{ProvenanceEventKind, RestoreDocumentBodyRevisionRequest};
 
+use crate::storage::body_state::{CanonicalBodyState, RetainedBodyHistoryPayload};
 use crate::storage::sqlite::state::{
     append_body_revision, append_event, append_path_revision, make_event, save_workspace_state,
-    upsert_body,
+    upsert_body_state,
 };
 use crate::storage::{
     StoreError,
@@ -36,10 +37,10 @@ pub(super) fn apply_document_restore(
         resolution.target_mount.clone();
     resolution.state.snapshot.manifest.entries[resolution.entry_index].relative_path =
         resolution.target_path.clone();
-    upsert_body(
+    upsert_body_state(
         &mut resolution.state.snapshot,
         &resolution.document_id,
-        &resolution.target_revision.body_text,
+        &CanonicalBodyState::full_text_merge_v1(resolution.target_revision.body_text.clone()),
     );
 
     let event = make_event(
@@ -61,16 +62,18 @@ pub(super) fn apply_document_restore(
     append_body_revision(
         transaction,
         &request.workspace_id,
-        &FileBodyRevision {
-            seq: event.cursor,
-            workspace_cursor: event.cursor,
-            actor_id: request.actor_id.clone(),
-            document_id: request.document_id.clone(),
-            base_text: current_text,
-            body_text: resolution.target_revision.body_text,
-            conflicted: false,
-            timestamp_ms: event.timestamp_ms,
-        },
+        &FileBodyRevision::from_retained_history(
+            event.cursor,
+            event.cursor,
+            request.actor_id.clone(),
+            request.document_id.clone(),
+            &RetainedBodyHistoryPayload::full_text_revision_v1(
+                current_text,
+                resolution.target_revision.body_text,
+                false,
+            ),
+            event.timestamp_ms,
+        ),
     )?;
     if entry.deleted
         || resolution.target_mount != entry.mount_relative_path
