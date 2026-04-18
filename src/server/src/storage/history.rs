@@ -84,6 +84,13 @@ impl FileBodyRevision {
         self.retained_history().materialized_body_state()
     }
 
+    pub(crate) fn replayed_body_state(
+        &self,
+        previous_state: Option<&CanonicalBodyState>,
+    ) -> CanonicalBodyState {
+        self.retained_history().replayed_body_state(previous_state)
+    }
+
     pub(crate) fn to_public_revision(&self) -> DocumentBodyRevision {
         self.retained_history().to_public_revision(
             self.seq,
@@ -92,6 +99,18 @@ impl FileBodyRevision {
             self.timestamp_ms,
         )
     }
+}
+
+pub(crate) fn replay_body_revision_run(
+    revisions: impl IntoIterator<Item = FileBodyRevision>,
+) -> HashMap<String, CanonicalBodyState> {
+    let mut states = HashMap::<String, CanonicalBodyState>::new();
+    for revision in revisions {
+        let previous_state = states.get(revision.document_id.as_str());
+        let next_state = revision.replayed_body_state(previous_state);
+        states.insert(revision.document_id.clone(), next_state);
+    }
+    states
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -279,33 +298,9 @@ pub(crate) fn file_reconstruct_workspace_at_cursor(
             },
         );
 
-    let latest_bodies = body_history
-        .into_iter()
-        .filter(|revision| {
-            effective_workspace_cursor(revision.seq, revision.workspace_cursor) <= cursor
-        })
-        .fold(
-            HashMap::<String, FileBodyRevision>::new(),
-            |mut acc, revision| {
-                let replace = acc
-                    .get(&revision.document_id)
-                    .map(|current| {
-                        effective_workspace_cursor(revision.seq, revision.workspace_cursor)
-                            > effective_workspace_cursor(current.seq, current.workspace_cursor)
-                            || (effective_workspace_cursor(revision.seq, revision.workspace_cursor)
-                                == effective_workspace_cursor(
-                                    current.seq,
-                                    current.workspace_cursor,
-                                )
-                                && revision.seq > current.seq)
-                    })
-                    .unwrap_or(true);
-                if replace {
-                    acc.insert(revision.document_id.clone(), revision);
-                }
-                acc
-            },
-        );
+    let latest_bodies = replay_body_revision_run(body_history.into_iter().filter(|revision| {
+        effective_workspace_cursor(revision.seq, revision.workspace_cursor) <= cursor
+    }));
 
     let mut entries = latest_paths
         .into_values()
@@ -325,9 +320,7 @@ pub(crate) fn file_reconstruct_workspace_at_cursor(
     });
 
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
-        latest_bodies
-            .get(document_id.as_str())
-            .map(|revision| revision.materialized_body_state())
+        latest_bodies.get(document_id.as_str()).cloned()
     }))
 }
 
@@ -586,32 +579,30 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
         .await?;
     let body_rows = client
         .query(
-            "select distinct on (document_id) \
-                document_id, history_kind, base_text, body_text, conflicted \
+            "select \
+                seq, workspace_cursor, document_id, history_kind, base_text, body_text, conflicted \
              from document_body_revisions \
              where workspace_id = $1 and workspace_cursor <= $2 \
-             order by document_id, workspace_cursor desc, seq desc",
+             order by workspace_cursor asc, seq asc",
             &[&workspace_id, &(cursor as i64)],
         )
         .await?;
 
-    let body_map = body_rows
-        .into_iter()
-        .map(|row| {
-            let kind =
-                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
-                    .map_err(StoreError::new)?;
-            Ok((
-                row.get::<_, String>("document_id"),
-                FULL_TEXT_BODY_MODEL.history_from_storage_record(
-                    kind,
-                    row.get::<_, String>("base_text"),
-                    row.get::<_, String>("body_text"),
-                    row.get::<_, bool>("conflicted"),
-                ),
-            ))
-        })
-        .collect::<Result<HashMap<_, _>, StoreError>>()?;
+    let body_map = replay_body_revision_run(body_rows.into_iter().map(|row| {
+        let kind = RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+            .expect("stored retained body history kind should parse");
+        FileBodyRevision {
+            seq: row.get::<_, i64>("seq") as u64,
+            workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
+            actor_id: String::new(),
+            document_id: row.get::<_, String>("document_id"),
+            history_kind: kind,
+            base_text: row.get::<_, String>("base_text"),
+            body_text: row.get::<_, String>("body_text"),
+            conflicted: row.get::<_, bool>("conflicted"),
+            timestamp_ms: 0,
+        }
+    }));
 
     let mut entries = path_rows
         .into_iter()
@@ -631,9 +622,7 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
     });
 
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
-        body_map
-            .get(document_id.as_str())
-            .map(|payload| payload.materialized_body_state())
+        body_map.get(document_id.as_str()).cloned()
     }))
 }
 

@@ -19,9 +19,9 @@ use super::body_persistence::{
 };
 use super::body_state::{
     BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL,
-    RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
+    RetainedBodyHistoryKind, RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
 };
-use super::history::file_read_body_revisions;
+use super::history::{file_read_body_revisions, replay_body_revision_run};
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;
 
@@ -162,8 +162,9 @@ pub(crate) fn file_restore_document_body_revision(
         ));
     }
 
-    let target_revision = file_read_body_revisions(state_dir, &request.workspace_id)?
-        .into_iter()
+    let body_revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
+    let target_revision = body_revisions
+        .iter()
         .find(|revision| revision.document_id == request.document_id && revision.seq == request.seq)
         .ok_or_else(|| {
             StoreError::new(format!(
@@ -171,6 +172,7 @@ pub(crate) fn file_restore_document_body_revision(
                 request.document_id, request.seq
             ))
         })?;
+    let fallback_target_state = target_revision.materialized_body_state();
     let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
     let current_state = body_persistence.load_current_state(&snapshot, &document_id);
 
@@ -178,7 +180,11 @@ pub(crate) fn file_restore_document_body_revision(
     snapshot.manifest.entries[entry_index].mount_relative_path = target_mount_relative_path.clone();
     snapshot.manifest.entries[entry_index].relative_path = target_relative_path.clone();
 
-    let target_state = target_revision.materialized_body_state();
+    let target_state = replay_body_revision_run(body_revisions.into_iter().filter(|revision| {
+        revision.document_id == request.document_id && revision.seq <= request.seq
+    }))
+    .remove(request.document_id.as_str())
+    .unwrap_or(fallback_target_state);
     body_persistence.write_current_state(&mut snapshot, &document_id, &target_state);
 
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
@@ -355,24 +361,25 @@ pub(crate) async fn postgres_restore_document_body_revision(
     let current_state = body_persistence
         .load_current_state(&request.document_id)
         .await?;
-    let target_text = transaction
-        .query_opt(
-            "select body_text from document_body_revisions \
-             where workspace_id = $1 and document_id = $2 and seq = $3",
+    let target_rows = transaction
+        .query(
+            "select seq, workspace_cursor, history_kind, base_text, body_text, conflicted \
+             from document_body_revisions \
+             where workspace_id = $1 and document_id = $2 and seq <= $3 \
+             order by seq asc",
             &[
                 &request.workspace_id,
                 &request.document_id,
                 &(request.seq as i64),
             ],
         )
-        .await?
-        .map(|row| row.get::<_, String>("body_text"))
-        .ok_or_else(|| {
-            StoreError::new(format!(
-                "document {} has no body revision {}",
-                request.document_id, request.seq
-            ))
-        })?;
+        .await?;
+    if target_rows.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no body revision {}",
+            request.document_id, request.seq
+        )));
+    }
     if was_deleted || target_mount_path != mount_path || target_relative_path != relative_path {
         transaction
             .execute(
@@ -388,7 +395,29 @@ pub(crate) async fn postgres_restore_document_body_revision(
             .await?;
     }
 
-    let target_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(target_text);
+    let target_state = replay_body_revision_run(target_rows.into_iter().map(|row| {
+        let history_kind =
+            RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                .expect("stored retained body history kind should parse");
+        super::history::FileBodyRevision {
+            seq: row.get::<_, i64>("seq") as u64,
+            workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
+            actor_id: String::new(),
+            document_id: request.document_id.clone(),
+            history_kind,
+            base_text: row.get::<_, String>("base_text"),
+            body_text: row.get::<_, String>("body_text"),
+            conflicted: row.get::<_, bool>("conflicted"),
+            timestamp_ms: 0,
+        }
+    }))
+    .remove(request.document_id.as_str())
+    .ok_or_else(|| {
+        StoreError::new(format!(
+            "document {} has no body revision {}",
+            request.document_id, request.seq
+        ))
+    })?;
     body_persistence
         .write_current_state(&request.document_id, &target_state)
         .await?;

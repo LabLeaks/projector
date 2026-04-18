@@ -383,6 +383,15 @@ impl RetainedBodyHistoryPayload {
         FULL_TEXT_BODY_MODEL.state_from_materialized_text(self.materialized_text())
     }
 
+    pub(crate) fn replayed_body_state(
+        &self,
+        previous_state: Option<&CanonicalBodyState>,
+    ) -> CanonicalBodyState {
+        FULL_TEXT_BODY_MODEL
+            .replayed_history_state(self, previous_state)
+            .unwrap_or_else(|_| self.materialized_body_state())
+    }
+
     pub(crate) fn to_public_revision(
         &self,
         seq: u64,
@@ -536,6 +545,51 @@ impl BodyStateModel for FullTextBodyModel {
             target_state.materialized_text(),
             false,
         )
+    }
+}
+
+impl FullTextBodyModel {
+    fn yrs_update_v1_from_payload(&self, storage_payload: &str) -> Result<Vec<u8>, String> {
+        let stored: StoredYrsTextUpdateV1 = serde_json::from_str(storage_payload)
+            .map_err(|err| format!("parse stored yrs update payload: {err}"))?;
+        decode_hex(&stored.update_v1_hex)
+    }
+
+    fn yrs_checkpoint_from_state(
+        &self,
+        state: &CanonicalBodyState,
+    ) -> Result<YrsTextCheckpoint, String> {
+        match state.kind() {
+            CanonicalBodyStateKind::FullTextMergeV1 => {
+                YrsTextCheckpoint::from_materialized_text(state.materialized_text())
+            }
+            CanonicalBodyStateKind::YrsTextCheckpointV1 => {
+                YrsTextCheckpoint::from_storage_payload(state.storage_payload())
+            }
+        }
+    }
+
+    fn replayed_history_state(
+        &self,
+        payload: &RetainedBodyHistoryPayload,
+        previous_state: Option<&CanonicalBodyState>,
+    ) -> Result<CanonicalBodyState, String> {
+        if payload.kind() != RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            return Ok(payload.materialized_body_state());
+        }
+
+        let Some(previous_state) = previous_state else {
+            return Ok(payload.materialized_body_state());
+        };
+        if previous_state.materialized_text() != payload.base_text() {
+            return Ok(payload.materialized_body_state());
+        }
+
+        let update_v1 = self.yrs_update_v1_from_payload(payload.storage_payload())?;
+        let checkpoint = self
+            .yrs_checkpoint_from_state(previous_state)?
+            .with_update_v1(&update_v1)?;
+        self.state_from_yrs_checkpoint(checkpoint)
     }
 }
 
@@ -775,7 +829,8 @@ fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind,
-        FullTextBodyModel, RetainedBodyHistoryKind, ThreeWayMergeBodyEngine, YrsTextCheckpoint,
+        FullTextBodyModel, RetainedBodyHistoryKind, RetainedBodyHistoryPayload,
+        ThreeWayMergeBodyEngine, YrsTextCheckpoint,
     };
     use yrs::{GetString, Text, Transact};
 
@@ -868,6 +923,21 @@ mod tests {
         assert_eq!(decoded.materialized_text(), "after\n");
         assert_eq!(decoded.storage_payload(), payload.storage_payload());
         assert!(!decoded.conflicted());
+    }
+
+    #[test]
+    fn yrs_update_history_replays_against_prior_state_when_available() {
+        let model = FullTextBodyModel;
+        let prior_state = model.state_from_materialized_text("before\n");
+        let payload = model.history_from_stored_revision("before\n", "after\n", false);
+        let replayed = RetainedBodyHistoryPayload {
+            materialized_text: "stale cached text\n".to_owned(),
+            ..payload
+        }
+        .replayed_body_state(Some(&prior_state));
+
+        assert_eq!(replayed.kind(), CanonicalBodyStateKind::YrsTextCheckpointV1);
+        assert_eq!(replayed.materialized_text(), "after\n");
     }
 
     #[test]

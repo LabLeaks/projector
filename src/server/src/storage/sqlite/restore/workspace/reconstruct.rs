@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use projector_domain::{BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState};
 
 use crate::storage::body_projection::snapshot_from_manifest_entries;
+use crate::storage::history::replay_body_revision_run;
 use crate::storage::sqlite::history::{read_body_revisions, read_path_history};
 use crate::storage::sqlite::state::effective_workspace_cursor;
-use crate::storage::{StoreError, history::FileBodyRevision, history::FilePathRevision};
+use crate::storage::{StoreError, history::FilePathRevision};
 
 pub(super) fn reconstruct_workspace_at_cursor(
     connection: &rusqlite::Connection,
@@ -21,7 +22,9 @@ pub(super) fn reconstruct_workspace_at_cursor(
     let body_history = read_body_revisions(connection, workspace_id)?;
 
     let latest_paths = latest_path_revisions(path_history, cursor);
-    let latest_bodies = latest_body_revisions(body_history, cursor);
+    let latest_bodies = replay_body_revision_run(body_history.into_iter().filter(|revision| {
+        effective_workspace_cursor(revision.seq, revision.workspace_cursor) <= cursor
+    }));
 
     let mut entries = latest_paths
         .into_values()
@@ -41,9 +44,7 @@ pub(super) fn reconstruct_workspace_at_cursor(
     });
 
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
-        latest_bodies
-            .get(document_id.as_str())
-            .map(|revision| revision.materialized_body_state())
+        latest_bodies.get(document_id.as_str()).cloned()
     }))
 }
 
@@ -116,39 +117,6 @@ fn latest_path_revisions(
         })
         .fold(
             HashMap::<String, FilePathRevision>::new(),
-            |mut acc, revision| {
-                let replace = acc
-                    .get(&revision.document_id)
-                    .map(|current| {
-                        effective_workspace_cursor(revision.seq, revision.workspace_cursor)
-                            > effective_workspace_cursor(current.seq, current.workspace_cursor)
-                            || (effective_workspace_cursor(revision.seq, revision.workspace_cursor)
-                                == effective_workspace_cursor(
-                                    current.seq,
-                                    current.workspace_cursor,
-                                )
-                                && revision.seq > current.seq)
-                    })
-                    .unwrap_or(true);
-                if replace {
-                    acc.insert(revision.document_id.clone(), revision);
-                }
-                acc
-            },
-        )
-}
-
-fn latest_body_revisions(
-    body_history: Vec<FileBodyRevision>,
-    cursor: u64,
-) -> HashMap<String, FileBodyRevision> {
-    body_history
-        .into_iter()
-        .filter(|revision| {
-            effective_workspace_cursor(revision.seq, revision.workspace_cursor) <= cursor
-        })
-        .fold(
-            HashMap::<String, FileBodyRevision>::new(),
             |mut acc, revision| {
                 let replace = acc
                     .get(&revision.document_id)
