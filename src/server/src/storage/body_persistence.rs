@@ -10,8 +10,8 @@ use projector_domain::{BootstrapSnapshot, DocumentId};
 
 use super::StoreError;
 use super::body_state::{
-    BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryPayload,
-    body_state_from_snapshot, upsert_body_state,
+    BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind, FULL_TEXT_BODY_MODEL,
+    RetainedBodyHistoryPayload, body_state_from_snapshot, upsert_body_state,
 };
 use super::history::{FileBodyRevision, file_append_body_revision, insert_body_revision_tx};
 
@@ -167,11 +167,19 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         Ok(self
             .transaction
             .query_opt(
-                "select body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
+                "select state_kind, body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
                 &[&self.workspace_id, &document_id],
             )
             .await?
-            .map(|row| FULL_TEXT_BODY_MODEL.state_from_materialized_text(row.get::<_, String>("body_text")))
+            .map(|row| {
+                let kind = CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
+                    .map_err(StoreError::new)?;
+                Ok::<CanonicalBodyState, StoreError>(FULL_TEXT_BODY_MODEL.state_from_storage_record(
+                    kind,
+                    row.get::<_, String>("body_text"),
+                ))
+            })
+            .transpose()?
             .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state()))
     }
 
@@ -183,10 +191,15 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         self.transaction
             .execute(
                 "insert into document_body_snapshots \
-                 (document_id, workspace_id, body_text, compacted_through_seq) \
-                 values ($1, $2, $3, 0) \
-                 on conflict (document_id) do update set body_text = excluded.body_text, updated_at = now()",
-                &[&document_id, &self.workspace_id, &state.materialized_text()],
+                 (document_id, workspace_id, state_kind, body_text, compacted_through_seq) \
+                 values ($1, $2, $3, $4, 0) \
+                 on conflict (document_id) do update set state_kind = excluded.state_kind, body_text = excluded.body_text, updated_at = now()",
+                &[
+                    &document_id,
+                    &self.workspace_id,
+                    &state.kind().as_str(),
+                    &state.materialized_text(),
+                ],
             )
             .await?;
         Ok(())

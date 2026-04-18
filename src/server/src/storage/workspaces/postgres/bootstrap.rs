@@ -75,6 +75,7 @@ pub(crate) async fn postgres_bootstrap_workspace(
                 dp.relative_path, \
                 d.kind, \
                 dp.deleted, \
+                coalesce(dbs.state_kind, 'full_text_merge_v1') as state_kind, \
                 coalesce(dbs.body_text, '') as body_text \
              from document_paths dp \
              join documents d on d.id = dp.document_id \
@@ -128,6 +129,7 @@ pub(crate) async fn postgres_changes_since(
                     dp.relative_path, \
                     d.kind, \
                     dp.deleted, \
+                    coalesce(dbs.state_kind, 'full_text_merge_v1') as state_kind, \
                     coalesce(dbs.body_text, '') as body_text \
                  from document_paths dp \
                  join documents d on d.id = dp.document_id \

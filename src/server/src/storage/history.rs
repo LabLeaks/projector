@@ -15,7 +15,8 @@ use super::body_persistence::{
 };
 use super::body_projection::{snapshot_from_current_rows, snapshot_from_manifest_entries};
 use super::body_state::{
-    BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryPayload,
+    BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryKind,
+    RetainedBodyHistoryPayload,
 };
 use super::StoreError;
 use super::bodies::{file_persist_workspace_snapshot, file_read_workspace_snapshot};
@@ -36,10 +37,16 @@ pub(crate) struct FileBodyRevision {
     pub workspace_cursor: u64,
     pub actor_id: String,
     pub document_id: String,
+    #[serde(default = "default_retained_body_history_kind")]
+    pub history_kind: RetainedBodyHistoryKind,
     pub base_text: String,
     pub body_text: String,
     pub conflicted: bool,
     pub timestamp_ms: u128,
+}
+
+fn default_retained_body_history_kind() -> RetainedBodyHistoryKind {
+    RetainedBodyHistoryKind::FullTextRevisionV1
 }
 
 impl FileBodyRevision {
@@ -56,6 +63,7 @@ impl FileBodyRevision {
             workspace_cursor,
             actor_id: actor_id.into(),
             document_id: document_id.into(),
+            history_kind: payload.kind(),
             base_text: payload.base_text().to_owned(),
             body_text: payload.materialized_text().to_owned(),
             conflicted: payload.conflicted(),
@@ -64,7 +72,8 @@ impl FileBodyRevision {
     }
 
     pub(crate) fn retained_history(&self) -> RetainedBodyHistoryPayload {
-        FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+        FULL_TEXT_BODY_MODEL.history_from_storage_record(
+            self.history_kind,
             self.base_text.clone(),
             self.body_text.clone(),
             self.conflicted,
@@ -415,13 +424,14 @@ pub(crate) async fn insert_body_revision_tx(
     transaction
         .execute(
             "insert into document_body_revisions \
-             (workspace_id, document_id, workspace_cursor, actor_id, base_text, body_text, conflicted) \
-             values ($1, $2, $3, $4, $5, $6, $7)",
+             (workspace_id, document_id, workspace_cursor, actor_id, history_kind, base_text, body_text, conflicted) \
+             values ($1, $2, $3, $4, $5, $6, $7, $8)",
             &[
                 &workspace_id,
                 &document_id,
                 &(workspace_cursor as i64),
                 &actor_id,
+                &payload.kind().as_str(),
                 &payload.base_text(),
                 &payload.materialized_text(),
                 &payload.conflicted(),
@@ -471,7 +481,7 @@ pub(crate) async fn postgres_list_body_revisions(
     let rows = client
         .query(
             "select \
-                seq, actor_id, document_id, base_text, body_text, conflicted, \
+                seq, actor_id, document_id, history_kind, base_text, body_text, conflicted, \
                 (extract(epoch from created_at) * 1000)::bigint as timestamp_ms \
              from document_body_revisions \
              where workspace_id = $1 and document_id = $2 \
@@ -483,7 +493,11 @@ pub(crate) async fn postgres_list_body_revisions(
     let mut revisions = rows
         .into_iter()
         .map(|row| {
-            FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok(FULL_TEXT_BODY_MODEL.history_from_storage_record(
+                kind,
                 row.get::<_, String>("base_text"),
                 row.get::<_, String>("body_text"),
                 row.get::<_, bool>("conflicted"),
@@ -493,9 +507,9 @@ pub(crate) async fn postgres_list_body_revisions(
                 row.get::<_, String>("actor_id"),
                 row.get::<_, String>("document_id"),
                 row.get::<_, i64>("timestamp_ms") as u128,
-            )
+            ))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, StoreError>>()?;
     revisions.reverse();
     Ok(revisions)
 }
@@ -576,7 +590,7 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
     let body_rows = client
         .query(
             "select distinct on (document_id) \
-                document_id, body_text \
+                document_id, history_kind, base_text, body_text, conflicted \
              from document_body_revisions \
              where workspace_id = $1 and workspace_cursor <= $2 \
              order by document_id, workspace_cursor desc, seq desc",
@@ -587,12 +601,20 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
     let body_map = body_rows
         .into_iter()
         .map(|row| {
-            (
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok((
                 row.get::<_, String>("document_id"),
-                row.get::<_, String>("body_text"),
-            )
+                FULL_TEXT_BODY_MODEL.history_from_storage_record(
+                    kind,
+                    row.get::<_, String>("base_text"),
+                    row.get::<_, String>("body_text"),
+                    row.get::<_, bool>("conflicted"),
+                ),
+            ))
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<Result<HashMap<_, _>, StoreError>>()?;
 
     let mut entries = path_rows
         .into_iter()
@@ -614,7 +636,7 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
         body_map
             .get(document_id.as_str())
-            .map(|text| FULL_TEXT_BODY_MODEL.state_from_materialized_text(text.clone()))
+            .map(|payload| payload.materialized_body_state())
     }))
 }
 
@@ -763,6 +785,7 @@ async fn postgres_current_workspace_snapshot(
                 dp.relative_path, \
                 d.kind, \
                 dp.deleted, \
+                coalesce(dbs.state_kind, 'full_text_merge_v1') as state_kind, \
                 coalesce(dbs.body_text, '') as body_text \
              from document_paths dp \
              join documents d on d.id = dp.document_id \

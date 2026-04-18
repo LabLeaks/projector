@@ -6,12 +6,25 @@ Owns the internal canonical-body-state and retained-body-history abstractions so
 use std::path::Path;
 
 use projector_domain::{BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId};
+use serde::{Deserialize, Serialize};
 
 pub(crate) trait BodyStateModel {
     fn empty_state(&self) -> CanonicalBodyState;
     fn state_from_materialized_text(&self, text: impl Into<String>) -> CanonicalBodyState;
+    fn state_from_storage_record(
+        &self,
+        kind: CanonicalBodyStateKind,
+        materialized_text: impl Into<String>,
+    ) -> CanonicalBodyState;
     fn history_from_stored_revision(
         &self,
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+        conflicted: bool,
+    ) -> RetainedBodyHistoryPayload;
+    fn history_from_storage_record(
+        &self,
+        kind: RetainedBodyHistoryKind,
         base_text: impl Into<String>,
         materialized_text: impl Into<String>,
         conflicted: bool,
@@ -29,9 +42,25 @@ pub(crate) struct FullTextBodyModel;
 
 pub(crate) const FULL_TEXT_BODY_MODEL: FullTextBodyModel = FullTextBodyModel;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum CanonicalBodyStateKind {
     FullTextMergeV1,
+}
+
+impl CanonicalBodyStateKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::FullTextMergeV1 => "full_text_merge_v1",
+        }
+    }
+
+    pub(crate) fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "full_text_merge_v1" => Ok(Self::FullTextMergeV1),
+            other => Err(format!("unknown canonical body state kind {other}")),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,9 +122,25 @@ pub(crate) fn upsert_body_state(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum RetainedBodyHistoryKind {
     FullTextRevisionV1,
+}
+
+impl RetainedBodyHistoryKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::FullTextRevisionV1 => "full_text_revision_v1",
+        }
+    }
+
+    pub(crate) fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "full_text_revision_v1" => Ok(Self::FullTextRevisionV1),
+            other => Err(format!("unknown retained body history kind {other}")),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,6 +167,10 @@ impl RetainedBodyHistoryPayload {
 
     pub(crate) fn base_text(&self) -> &str {
         &self.base_text
+    }
+
+    pub(crate) fn kind(&self) -> RetainedBodyHistoryKind {
+        self.kind
     }
 
     pub(crate) fn materialized_text(&self) -> &str {
@@ -164,6 +213,18 @@ impl BodyStateModel for FullTextBodyModel {
         CanonicalBodyState::full_text_merge_v1(text)
     }
 
+    fn state_from_storage_record(
+        &self,
+        kind: CanonicalBodyStateKind,
+        materialized_text: impl Into<String>,
+    ) -> CanonicalBodyState {
+        match kind {
+            CanonicalBodyStateKind::FullTextMergeV1 => {
+                self.state_from_materialized_text(materialized_text)
+            }
+        }
+    }
+
     fn history_from_stored_revision(
         &self,
         base_text: impl Into<String>,
@@ -171,6 +232,20 @@ impl BodyStateModel for FullTextBodyModel {
         conflicted: bool,
     ) -> RetainedBodyHistoryPayload {
         RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, conflicted)
+    }
+
+    fn history_from_storage_record(
+        &self,
+        kind: RetainedBodyHistoryKind,
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+        conflicted: bool,
+    ) -> RetainedBodyHistoryPayload {
+        match kind {
+            RetainedBodyHistoryKind::FullTextRevisionV1 => {
+                self.history_from_stored_revision(base_text, materialized_text, conflicted)
+            }
+        }
     }
 
     fn created_history(&self, state: &CanonicalBodyState) -> RetainedBodyHistoryPayload {

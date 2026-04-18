@@ -10,7 +10,9 @@ use projector_domain::{
 };
 
 use super::StoreError;
-use super::body_state::{BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL};
+use super::body_state::{
+    BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind, FULL_TEXT_BODY_MODEL,
+};
 
 pub(crate) fn live_body_from_state(
     document_id: DocumentId,
@@ -50,7 +52,7 @@ where
     F: Fn(&str) -> Result<DocumentKind, StoreError>,
 {
     let mut entries = Vec::new();
-    let mut body_rows = Vec::<(DocumentId, String)>::new();
+    let mut body_rows = Vec::<(DocumentId, (CanonicalBodyStateKind, String))>::new();
 
     for row in rows {
         let document_id = DocumentId::new(row.get::<_, String>("document_id"));
@@ -64,7 +66,14 @@ where
             deleted,
         });
         if !deleted {
-            body_rows.push((document_id, row.get::<_, String>("body_text")));
+            body_rows.push((
+                document_id,
+                (
+                    CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
+                        .map_err(StoreError::new)?,
+                    row.get::<_, String>("body_text"),
+                ),
+            ));
         }
     }
 
@@ -72,6 +81,6 @@ where
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
         body_map
             .get(document_id)
-            .map(|text| FULL_TEXT_BODY_MODEL.state_from_materialized_text(text.clone()))
+            .map(|(kind, text)| FULL_TEXT_BODY_MODEL.state_from_storage_record(*kind, text.clone()))
     }))
 }
