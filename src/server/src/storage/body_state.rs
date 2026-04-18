@@ -403,7 +403,13 @@ impl BodyStateModel for FullTextBodyModel {
         materialized_text: impl Into<String>,
         conflicted: bool,
     ) -> RetainedBodyHistoryPayload {
-        RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, conflicted)
+        let base_text = base_text.into();
+        let materialized_text = materialized_text.into();
+        if conflicted {
+            RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, true)
+        } else {
+            self.checkpoint_history(base_text, materialized_text)
+        }
     }
 
     fn checkpoint_history(
@@ -430,7 +436,11 @@ impl BodyStateModel for FullTextBodyModel {
     ) -> RetainedBodyHistoryPayload {
         match kind {
             RetainedBodyHistoryKind::FullTextRevisionV1 => {
-                self.history_from_stored_revision(base_text, materialized_text, conflicted)
+                RetainedBodyHistoryPayload::full_text_revision_v1(
+                    base_text,
+                    materialized_text,
+                    conflicted,
+                )
             }
             RetainedBodyHistoryKind::FullTextCheckpointV1 => {
                 RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text)
@@ -762,6 +772,32 @@ mod tests {
         assert_eq!(decoded.materialized_text(), "after\n");
         assert_eq!(decoded.storage_payload(), payload.storage_payload());
         assert!(!decoded.conflicted());
+    }
+
+    #[test]
+    fn non_conflicted_history_defaults_to_yrs_checkpoint_payload() {
+        let model = FullTextBodyModel;
+        let payload = model.history_from_stored_revision("before\n", "after\n", false);
+
+        assert_eq!(payload.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
+        assert_eq!(payload.base_text(), "before\n");
+        assert_eq!(payload.materialized_text(), "after\n");
+        assert!(!payload.conflicted());
+        assert_ne!(payload.storage_payload(), "after\n");
+    }
+
+    #[test]
+    fn conflicted_history_stays_on_full_text_revision_kind() {
+        let model = FullTextBodyModel;
+        let payload = model.history_from_stored_revision(
+            "before\n",
+            "<<<<<<< existing\na\n=======\nb\n>>>>>>> incoming\n",
+            true,
+        );
+
+        assert_eq!(payload.kind(), RetainedBodyHistoryKind::FullTextRevisionV1);
+        assert!(payload.conflicted());
+        assert_eq!(payload.storage_payload(), payload.materialized_text());
     }
 
     #[test]

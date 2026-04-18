@@ -3413,12 +3413,17 @@ fn server_state_retains_document_body_revisions() {
             .join("body_revisions.json"),
     )
     .expect("read body history");
+    let body_history: serde_json::Value =
+        serde_json::from_str(&body_history).expect("parse body history");
+    let revisions = body_history.as_array().expect("body revisions array");
 
-    assert!(body_history.contains("\"base_text\": \"\""));
-    assert!(body_history.contains("<p>created revision</p>"));
-    assert!(body_history.contains("\"conflicted\": false"));
-    assert!(body_history.contains("\"base_text\": \"<p>created revision</p>\\n\""));
-    assert!(body_history.contains("<p>updated revision</p>"));
+    assert_eq!(revisions.len(), 2);
+    assert_eq!(revisions[0]["base_text"], "");
+    assert_eq!(revisions[0]["conflicted"], false);
+    assert_eq!(revisions[1]["base_text"], "<p>created revision</p>\n");
+    assert_eq!(revisions[1]["conflicted"], false);
+    assert!(revisions[0]["body_text"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(revisions[1]["body_text"].as_str().is_some_and(|value| !value.is_empty()));
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_BODY_REVISIONS
