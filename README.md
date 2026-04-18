@@ -106,6 +106,8 @@ Versioned GitHub Releases also publish release archives for both:
 - `projector`
 - `projector-server`
 
+This release does not use crates.io as a supported distribution surface.
+
 In the normal BYO-server flow, users do not manually install `projector-server` on the remote machine. `projector deploy` is responsible for provisioning that binary into the remote sysbox-isolated runtime.
 
 ## Release
