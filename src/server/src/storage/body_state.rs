@@ -532,7 +532,7 @@ impl BodyStateModel for FullTextBodyModel {
     }
 
     fn created_history(&self, state: &CanonicalBodyState) -> RetainedBodyHistoryPayload {
-        self.history_from_stored_revision("", state.materialized_text(), false)
+        self.checkpoint_history("", state.materialized_text())
     }
 
     fn restored_history(
@@ -540,10 +540,9 @@ impl BodyStateModel for FullTextBodyModel {
         current_state: &CanonicalBodyState,
         target_state: &CanonicalBodyState,
     ) -> RetainedBodyHistoryPayload {
-        self.history_from_stored_revision(
+        self.checkpoint_history(
             current_state.materialized_text(),
             target_state.materialized_text(),
-            false,
         )
     }
 }
@@ -938,6 +937,19 @@ mod tests {
 
         assert_eq!(replayed.kind(), CanonicalBodyStateKind::YrsTextCheckpointV1);
         assert_eq!(replayed.materialized_text(), "after\n");
+    }
+
+    #[test]
+    fn created_and_restored_history_use_checkpoint_payloads() {
+        let model = FullTextBodyModel;
+        let created = model.created_history(&model.state_from_materialized_text("created\n"));
+        let restored = model.restored_history(
+            &model.state_from_materialized_text("before\n"),
+            &model.state_from_materialized_text("after\n"),
+        );
+
+        assert_eq!(created.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
+        assert_eq!(restored.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
     }
 
     #[test]

@@ -9,7 +9,9 @@ use projector_domain::{DocumentId, RestoreDocumentBodyRevisionRequest};
 
 use crate::storage::sqlite::history::read_body_revisions;
 use crate::storage::sqlite::state::load_required_workspace_state;
-use crate::storage::{StoreError, history::FileBodyRevision};
+use crate::storage::{
+    StoreError, body_state::CanonicalBodyState, history::replay_body_revision_run,
+};
 
 pub(super) struct DocumentRestoreResolution {
     pub(super) state: crate::storage::sqlite::state::SqliteWorkspaceState,
@@ -17,7 +19,7 @@ pub(super) struct DocumentRestoreResolution {
     pub(super) entry_index: usize,
     pub(super) target_mount: PathBuf,
     pub(super) target_path: PathBuf,
-    pub(super) target_revision: FileBodyRevision,
+    pub(super) target_state: CanonicalBodyState,
 }
 
 pub(super) fn resolve_document_restore_target(
@@ -70,15 +72,26 @@ pub(super) fn resolve_document_restore_target(
         ));
     }
 
-    let target_revision = read_body_revisions(transaction, &request.workspace_id)?
-        .into_iter()
-        .find(|revision| revision.document_id == request.document_id && revision.seq == request.seq)
-        .ok_or_else(|| {
-            StoreError::new(format!(
-                "document {} has no body revision {}",
-                request.document_id, request.seq
-            ))
-        })?;
+    let body_revisions = read_body_revisions(transaction, &request.workspace_id)?;
+    if !body_revisions
+        .iter()
+        .any(|revision| revision.document_id == request.document_id && revision.seq == request.seq)
+    {
+        return Err(StoreError::new(format!(
+            "document {} has no body revision {}",
+            request.document_id, request.seq
+        )));
+    }
+    let target_state = replay_body_revision_run(body_revisions.into_iter().filter(|revision| {
+        revision.document_id == request.document_id && revision.seq <= request.seq
+    }))
+    .remove(request.document_id.as_str())
+    .ok_or_else(|| {
+        StoreError::new(format!(
+            "document {} has no body revision {}",
+            request.document_id, request.seq
+        ))
+    })?;
 
     Ok(DocumentRestoreResolution {
         state,
@@ -86,6 +99,6 @@ pub(super) fn resolve_document_restore_target(
         entry_index,
         target_mount,
         target_path,
-        target_revision,
+        target_state,
     })
 }

@@ -37,6 +37,8 @@ pub(crate) struct FileBodyRevision {
     pub workspace_cursor: u64,
     pub actor_id: String,
     pub document_id: String,
+    #[serde(default)]
+    pub checkpoint_anchor_seq: Option<u64>,
     #[serde(default = "default_retained_body_history_kind")]
     pub history_kind: RetainedBodyHistoryKind,
     pub base_text: String,
@@ -55,6 +57,7 @@ impl FileBodyRevision {
         workspace_cursor: u64,
         actor_id: impl Into<String>,
         document_id: impl Into<String>,
+        checkpoint_anchor_seq: Option<u64>,
         payload: &RetainedBodyHistoryPayload,
         timestamp_ms: u128,
     ) -> Self {
@@ -63,6 +66,7 @@ impl FileBodyRevision {
             workspace_cursor,
             actor_id: actor_id.into(),
             document_id: document_id.into(),
+            checkpoint_anchor_seq,
             history_kind: payload.kind(),
             base_text: payload.base_text().to_owned(),
             body_text: payload.storage_payload().to_owned(),
@@ -91,6 +95,16 @@ impl FileBodyRevision {
         self.retained_history().replayed_body_state(previous_state)
     }
 
+    pub(crate) fn effective_checkpoint_anchor_seq(&self) -> Option<u64> {
+        self.checkpoint_anchor_seq.or_else(|| {
+            if self.history_kind == RetainedBodyHistoryKind::YrsTextUpdateV1 {
+                None
+            } else {
+                Some(self.seq)
+            }
+        })
+    }
+
     pub(crate) fn to_public_revision(&self) -> DocumentBodyRevision {
         self.retained_history().to_public_revision(
             self.seq,
@@ -105,12 +119,38 @@ pub(crate) fn replay_body_revision_run(
     revisions: impl IntoIterator<Item = FileBodyRevision>,
 ) -> HashMap<String, CanonicalBodyState> {
     let mut states = HashMap::<String, CanonicalBodyState>::new();
+    let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
     for revision in revisions {
-        let previous_state = states.get(revision.document_id.as_str());
+        let previous_state = if revision.history_kind == RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            revision
+                .effective_checkpoint_anchor_seq()
+                .and_then(|anchor_seq| {
+                    anchored_states.get(&(revision.document_id.clone(), anchor_seq))
+                })
+        } else {
+            states.get(revision.document_id.as_str())
+        };
         let next_state = revision.replayed_body_state(previous_state);
+        if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
+            anchored_states.insert(
+                (revision.document_id.clone(), anchor_seq),
+                next_state.clone(),
+            );
+        }
         states.insert(revision.document_id.clone(), next_state);
     }
     states
+}
+
+pub(crate) fn latest_checkpoint_anchor_seq(
+    revisions: impl IntoIterator<Item = FileBodyRevision>,
+    document_id: &str,
+) -> Option<u64> {
+    revisions
+        .into_iter()
+        .filter(|revision| revision.document_id == document_id)
+        .filter_map(|revision| revision.effective_checkpoint_anchor_seq())
+        .last()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -408,18 +448,20 @@ pub(crate) async fn insert_body_revision_tx(
     document_id: &str,
     workspace_cursor: u64,
     actor_id: &str,
+    checkpoint_anchor_seq: Option<u64>,
     payload: &RetainedBodyHistoryPayload,
 ) -> Result<(), StoreError> {
     transaction
         .execute(
             "insert into document_body_revisions \
-             (workspace_id, document_id, workspace_cursor, actor_id, history_kind, base_text, body_text, conflicted) \
-             values ($1, $2, $3, $4, $5, $6, $7, $8)",
+             (workspace_id, document_id, workspace_cursor, actor_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted) \
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             &[
                 &workspace_id,
                 &document_id,
                 &(workspace_cursor as i64),
                 &actor_id,
+                &checkpoint_anchor_seq.map(|seq| seq as i64),
                 &payload.kind().as_str(),
                 &payload.base_text(),
                 &payload.storage_payload(),
@@ -470,7 +512,7 @@ pub(crate) async fn postgres_list_body_revisions(
     let rows = client
         .query(
             "select \
-                seq, actor_id, document_id, history_kind, base_text, body_text, conflicted, \
+                seq, actor_id, document_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted, \
                 (extract(epoch from created_at) * 1000)::bigint as timestamp_ms \
              from document_body_revisions \
              where workspace_id = $1 and document_id = $2 \
@@ -485,19 +527,21 @@ pub(crate) async fn postgres_list_body_revisions(
             let kind =
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
                     .map_err(StoreError::new)?;
-            Ok(FULL_TEXT_BODY_MODEL
-                .history_from_storage_record(
-                    kind,
-                    row.get::<_, String>("base_text"),
-                    row.get::<_, String>("body_text"),
-                    row.get::<_, bool>("conflicted"),
-                )
-                .to_public_revision(
-                    row.get::<_, i64>("seq") as u64,
-                    row.get::<_, String>("actor_id"),
-                    row.get::<_, String>("document_id"),
-                    row.get::<_, i64>("timestamp_ms") as u128,
-                ))
+            Ok(FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: 0,
+                actor_id: row.get::<_, String>("actor_id"),
+                document_id: row.get::<_, String>("document_id"),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind: kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+            }
+            .to_public_revision())
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
     revisions.reverse();
@@ -580,7 +624,7 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
     let body_rows = client
         .query(
             "select \
-                seq, workspace_cursor, document_id, history_kind, base_text, body_text, conflicted \
+                seq, workspace_cursor, document_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted \
              from document_body_revisions \
              where workspace_id = $1 and workspace_cursor <= $2 \
              order by workspace_cursor asc, seq asc",
@@ -596,6 +640,9 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
             workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
             actor_id: String::new(),
             document_id: row.get::<_, String>("document_id"),
+            checkpoint_anchor_seq: row
+                .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                .map(|seq| seq as u64),
             history_kind: kind,
             base_text: row.get::<_, String>("base_text"),
             body_text: row.get::<_, String>("body_text"),

@@ -23,6 +23,8 @@ mod restore;
 pub(crate) mod state;
 mod workspace;
 
+pub(crate) use history::read_body_revisions;
+
 pub struct SqliteWorkspaceStore {
     connection: Mutex<Connection>,
 }

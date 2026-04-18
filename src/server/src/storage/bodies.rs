@@ -363,7 +363,7 @@ pub(crate) async fn postgres_restore_document_body_revision(
         .await?;
     let target_rows = transaction
         .query(
-            "select seq, workspace_cursor, history_kind, base_text, body_text, conflicted \
+            "select seq, workspace_cursor, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted \
              from document_body_revisions \
              where workspace_id = $1 and document_id = $2 and seq <= $3 \
              order by seq asc",
@@ -404,6 +404,9 @@ pub(crate) async fn postgres_restore_document_body_revision(
             workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
             actor_id: String::new(),
             document_id: request.document_id.clone(),
+            checkpoint_anchor_seq: row
+                .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                .map(|seq| seq as u64),
             history_kind,
             base_text: row.get::<_, String>("base_text"),
             body_text: row.get::<_, String>("body_text"),

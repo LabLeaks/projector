@@ -57,7 +57,7 @@ pub(super) fn read_last_event_timestamp(
         .transpose()
 }
 
-pub(super) fn read_body_revisions(
+pub(crate) fn read_body_revisions(
     connection: &Connection,
     workspace_id: &str,
 ) -> Result<Vec<FileBodyRevision>, StoreError> {

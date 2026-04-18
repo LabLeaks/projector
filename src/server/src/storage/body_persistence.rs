@@ -13,7 +13,10 @@ use super::body_state::{
     BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind, FULL_TEXT_BODY_MODEL,
     RetainedBodyHistoryPayload, body_state_from_snapshot, upsert_body_state,
 };
-use super::history::{FileBodyRevision, file_append_body_revision, insert_body_revision_tx};
+use super::history::{
+    FileBodyRevision, file_append_body_revision, file_read_body_revisions, insert_body_revision_tx,
+    latest_checkpoint_anchor_seq,
+};
 
 pub(crate) trait SnapshotBodyPersistence {
     fn load_current_state(
@@ -67,6 +70,15 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
         payload: &RetainedBodyHistoryPayload,
         timestamp_ms: u128,
     ) -> Result<(), StoreError> {
+        let checkpoint_anchor_seq =
+            if payload.kind() == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1 {
+                latest_checkpoint_anchor_seq(
+                    file_read_body_revisions(self.state_dir, self.workspace_id)?,
+                    document_id,
+                )
+            } else {
+                Some(event_cursor)
+            };
         file_append_body_revision(
             self.state_dir,
             self.workspace_id,
@@ -75,6 +87,7 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
                 event_cursor,
                 actor_id.to_owned(),
                 document_id.to_owned(),
+                checkpoint_anchor_seq,
                 payload,
                 timestamp_ms,
             ),
@@ -105,6 +118,16 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
         payload: &RetainedBodyHistoryPayload,
         timestamp_ms: u128,
     ) -> Result<(), StoreError> {
+        let checkpoint_anchor_seq = if payload.kind()
+            == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1
+        {
+            latest_checkpoint_anchor_seq(
+                crate::storage::sqlite::read_body_revisions(self.transaction, self.workspace_id)?,
+                document_id,
+            )
+        } else {
+            Some(event_cursor)
+        };
         crate::storage::sqlite::state::append_body_revision(
             self.transaction,
             self.workspace_id,
@@ -113,6 +136,7 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
                 event_cursor,
                 actor_id.to_owned(),
                 document_id.to_owned(),
+                checkpoint_anchor_seq,
                 payload,
                 timestamp_ms,
             ),
@@ -211,12 +235,36 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         document_id: &str,
         payload: &RetainedBodyHistoryPayload,
     ) -> Result<(), StoreError> {
+        let checkpoint_anchor_seq =
+            if payload.kind() == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1 {
+                self.transaction
+                    .query_opt(
+                        "select seq, checkpoint_anchor_seq, history_kind \
+                     from document_body_revisions \
+                     where workspace_id = $1 and document_id = $2 \
+                     order by seq desc \
+                     limit 1",
+                        &[&self.workspace_id, &document_id],
+                    )
+                    .await?
+                    .and_then(|row| {
+                        row.get::<_, Option<i64>>("checkpoint_anchor_seq")
+                            .map(|seq| seq as u64)
+                            .or_else(|| match row.get::<_, String>("history_kind").as_str() {
+                                "yrs_text_update_v1" => None,
+                                _ => Some(row.get::<_, i64>("seq") as u64),
+                            })
+                    })
+            } else {
+                Some(event_cursor)
+            };
         insert_body_revision_tx(
             self.transaction,
             self.workspace_id,
             document_id,
             event_cursor,
             actor_id,
+            checkpoint_anchor_seq,
             payload,
         )
         .await
