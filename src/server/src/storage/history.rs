@@ -65,7 +65,7 @@ impl FileBodyRevision {
             document_id: document_id.into(),
             history_kind: payload.kind(),
             base_text: payload.base_text().to_owned(),
-            body_text: payload.materialized_text().to_owned(),
+            body_text: payload.storage_payload().to_owned(),
             conflicted: payload.conflicted(),
             timestamp_ms,
         }
@@ -429,7 +429,7 @@ pub(crate) async fn insert_body_revision_tx(
                 &actor_id,
                 &payload.kind().as_str(),
                 &payload.base_text(),
-                &payload.materialized_text(),
+                &payload.storage_payload(),
                 &payload.conflicted(),
             ],
         )

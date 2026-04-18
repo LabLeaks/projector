@@ -242,6 +242,7 @@ impl YrsTextCheckpoint {
 pub(crate) enum RetainedBodyHistoryKind {
     FullTextRevisionV1,
     FullTextCheckpointV1,
+    YrsTextCheckpointV1,
 }
 
 impl RetainedBodyHistoryKind {
@@ -249,6 +250,7 @@ impl RetainedBodyHistoryKind {
         match self {
             Self::FullTextRevisionV1 => "full_text_revision_v1",
             Self::FullTextCheckpointV1 => "full_text_checkpoint_v1",
+            Self::YrsTextCheckpointV1 => "yrs_text_checkpoint_v1",
         }
     }
 
@@ -256,6 +258,7 @@ impl RetainedBodyHistoryKind {
         match raw {
             "full_text_revision_v1" => Ok(Self::FullTextRevisionV1),
             "full_text_checkpoint_v1" => Ok(Self::FullTextCheckpointV1),
+            "yrs_text_checkpoint_v1" => Ok(Self::YrsTextCheckpointV1),
             other => Err(format!("unknown retained body history kind {other}")),
         }
     }
@@ -265,6 +268,7 @@ impl RetainedBodyHistoryKind {
 pub(crate) struct RetainedBodyHistoryPayload {
     kind: RetainedBodyHistoryKind,
     base_text: String,
+    storage_payload: String,
     materialized_text: String,
     conflicted: bool,
 }
@@ -275,10 +279,12 @@ impl RetainedBodyHistoryPayload {
         materialized_text: impl Into<String>,
         conflicted: bool,
     ) -> Self {
+        let materialized_text = materialized_text.into();
         Self {
             kind: RetainedBodyHistoryKind::FullTextRevisionV1,
             base_text: base_text.into(),
-            materialized_text: materialized_text.into(),
+            storage_payload: materialized_text.clone(),
+            materialized_text,
             conflicted,
         }
     }
@@ -287,12 +293,28 @@ impl RetainedBodyHistoryPayload {
         base_text: impl Into<String>,
         materialized_text: impl Into<String>,
     ) -> Self {
+        let materialized_text = materialized_text.into();
         Self {
             kind: RetainedBodyHistoryKind::FullTextCheckpointV1,
             base_text: base_text.into(),
-            materialized_text: materialized_text.into(),
+            storage_payload: materialized_text.clone(),
+            materialized_text,
             conflicted: false,
         }
+    }
+
+    fn yrs_text_checkpoint_v1(
+        base_text: impl Into<String>,
+        checkpoint: YrsTextCheckpoint,
+    ) -> Result<Self, String> {
+        let materialized_text = checkpoint.materialized_text()?;
+        Ok(Self {
+            kind: RetainedBodyHistoryKind::YrsTextCheckpointV1,
+            base_text: base_text.into(),
+            storage_payload: encode_hex(checkpoint.checkpoint_bytes()),
+            materialized_text,
+            conflicted: false,
+        })
     }
 
     pub(crate) fn base_text(&self) -> &str {
@@ -301,6 +323,10 @@ impl RetainedBodyHistoryPayload {
 
     pub(crate) fn kind(&self) -> RetainedBodyHistoryKind {
         self.kind
+    }
+
+    pub(crate) fn storage_payload(&self) -> &str {
+        &self.storage_payload
     }
 
     pub(crate) fn materialized_text(&self) -> &str {
@@ -312,7 +338,7 @@ impl RetainedBodyHistoryPayload {
     }
 
     pub(crate) fn materialized_body_state(&self) -> CanonicalBodyState {
-        FULL_TEXT_BODY_MODEL.state_from_materialized_text(self.materialized_text.clone())
+        FULL_TEXT_BODY_MODEL.state_from_materialized_text(self.materialized_text())
     }
 
     pub(crate) fn to_public_revision(
@@ -385,7 +411,14 @@ impl BodyStateModel for FullTextBodyModel {
         base_text: impl Into<String>,
         materialized_text: impl Into<String>,
     ) -> RetainedBodyHistoryPayload {
-        RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text)
+        let base_text = base_text.into();
+        let materialized_text = materialized_text.into();
+        RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
+            base_text,
+            YrsTextCheckpoint::from_materialized_text(&materialized_text)
+                .expect("materialized UTF-8 text should convert into a yrs checkpoint"),
+        )
+        .expect("yrs checkpoint should materialize into retained history payload")
     }
 
     fn history_from_storage_record(
@@ -400,7 +433,16 @@ impl BodyStateModel for FullTextBodyModel {
                 self.history_from_stored_revision(base_text, materialized_text, conflicted)
             }
             RetainedBodyHistoryKind::FullTextCheckpointV1 => {
-                self.checkpoint_history(base_text, materialized_text)
+                RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text)
+            }
+            RetainedBodyHistoryKind::YrsTextCheckpointV1 => {
+                let storage_payload = materialized_text.into();
+                RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
+                    base_text,
+                    YrsTextCheckpoint::from_storage_payload(&storage_payload)
+                        .expect("stored yrs history payload should decode"),
+                )
+                .expect("stored yrs history payload should materialize")
             }
         }
     }
@@ -703,21 +745,23 @@ mod tests {
         let model = FullTextBodyModel;
         let payload = model.checkpoint_history("before\n", "after\n");
 
-        assert_eq!(
-            payload.kind(),
-            RetainedBodyHistoryKind::FullTextCheckpointV1
-        );
+        assert_eq!(payload.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
         assert_eq!(payload.base_text(), "before\n");
         assert_eq!(payload.materialized_text(), "after\n");
+        assert_ne!(payload.storage_payload(), "after\n");
         assert!(!payload.conflicted());
 
         let decoded = model.history_from_storage_record(
-            RetainedBodyHistoryKind::FullTextCheckpointV1,
+            RetainedBodyHistoryKind::YrsTextCheckpointV1,
             payload.base_text(),
-            payload.materialized_text(),
+            payload.storage_payload(),
             true,
         );
-        assert_eq!(decoded, payload);
+        assert_eq!(decoded.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
+        assert_eq!(decoded.base_text(), "before\n");
+        assert_eq!(decoded.materialized_text(), "after\n");
+        assert_eq!(decoded.storage_payload(), payload.storage_payload());
+        assert!(!decoded.conflicted());
     }
 
     #[test]
