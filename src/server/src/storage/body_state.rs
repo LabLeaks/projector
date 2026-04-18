@@ -235,6 +235,20 @@ impl YrsTextCheckpoint {
         drop(txn);
         Self::from_doc(&doc)
     }
+
+    pub(crate) fn update_to_text_v1(&self, next_text: &str) -> Result<Vec<u8>, String> {
+        let doc = self.to_doc()?;
+        let current_text = self.materialized_text()?;
+        let body = doc.get_or_insert_text("body");
+        let mut txn = doc.transact_mut();
+        if !current_text.is_empty() {
+            body.remove_range(&mut txn, 0, current_text.chars().count() as u32);
+        }
+        if !next_text.is_empty() {
+            body.insert(&mut txn, 0, next_text);
+        }
+        Ok(txn.encode_update_v1())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -243,6 +257,7 @@ pub(crate) enum RetainedBodyHistoryKind {
     FullTextRevisionV1,
     FullTextCheckpointV1,
     YrsTextCheckpointV1,
+    YrsTextUpdateV1,
 }
 
 impl RetainedBodyHistoryKind {
@@ -251,6 +266,7 @@ impl RetainedBodyHistoryKind {
             Self::FullTextRevisionV1 => "full_text_revision_v1",
             Self::FullTextCheckpointV1 => "full_text_checkpoint_v1",
             Self::YrsTextCheckpointV1 => "yrs_text_checkpoint_v1",
+            Self::YrsTextUpdateV1 => "yrs_text_update_v1",
         }
     }
 
@@ -259,6 +275,7 @@ impl RetainedBodyHistoryKind {
             "full_text_revision_v1" => Ok(Self::FullTextRevisionV1),
             "full_text_checkpoint_v1" => Ok(Self::FullTextCheckpointV1),
             "yrs_text_checkpoint_v1" => Ok(Self::YrsTextCheckpointV1),
+            "yrs_text_update_v1" => Ok(Self::YrsTextUpdateV1),
             other => Err(format!("unknown retained body history kind {other}")),
         }
     }
@@ -271,6 +288,12 @@ pub(crate) struct RetainedBodyHistoryPayload {
     storage_payload: String,
     materialized_text: String,
     conflicted: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct StoredYrsTextUpdateV1 {
+    update_v1_hex: String,
+    materialized_text: String,
 }
 
 impl RetainedBodyHistoryPayload {
@@ -315,6 +338,25 @@ impl RetainedBodyHistoryPayload {
             materialized_text,
             conflicted: false,
         })
+    }
+
+    fn yrs_text_update_v1(
+        base_text: impl Into<String>,
+        update_v1: &[u8],
+        materialized_text: impl Into<String>,
+    ) -> Self {
+        let materialized_text = materialized_text.into();
+        Self {
+            kind: RetainedBodyHistoryKind::YrsTextUpdateV1,
+            base_text: base_text.into(),
+            storage_payload: serde_json::to_string(&StoredYrsTextUpdateV1 {
+                update_v1_hex: encode_hex(update_v1),
+                materialized_text: materialized_text.clone(),
+            })
+            .expect("yrs text update payload should serialize"),
+            materialized_text,
+            conflicted: false,
+        }
     }
 
     pub(crate) fn base_text(&self) -> &str {
@@ -408,7 +450,11 @@ impl BodyStateModel for FullTextBodyModel {
         if conflicted {
             RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, true)
         } else {
-            self.checkpoint_history(base_text, materialized_text)
+            let update_v1 = YrsTextCheckpoint::from_materialized_text(&base_text)
+                .expect("base text should convert into a yrs checkpoint")
+                .update_to_text_v1(&materialized_text)
+                .expect("next text should produce a yrs incremental update");
+            RetainedBodyHistoryPayload::yrs_text_update_v1(base_text, &update_v1, materialized_text)
         }
     }
 
@@ -453,6 +499,19 @@ impl BodyStateModel for FullTextBodyModel {
                         .expect("stored yrs history payload should decode"),
                 )
                 .expect("stored yrs history payload should materialize")
+            }
+            RetainedBodyHistoryKind::YrsTextUpdateV1 => {
+                let base_text = base_text.into();
+                let storage_payload = materialized_text.into();
+                let stored: StoredYrsTextUpdateV1 = serde_json::from_str(&storage_payload)
+                    .expect("stored yrs update payload should parse");
+                let update_v1 = decode_hex(&stored.update_v1_hex)
+                    .expect("stored yrs update payload should decode");
+                RetainedBodyHistoryPayload::yrs_text_update_v1(
+                    base_text,
+                    &update_v1,
+                    stored.materialized_text,
+                )
             }
         }
     }
@@ -779,11 +838,29 @@ mod tests {
         let model = FullTextBodyModel;
         let payload = model.history_from_stored_revision("before\n", "after\n", false);
 
-        assert_eq!(payload.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
+        assert_eq!(payload.kind(), RetainedBodyHistoryKind::YrsTextUpdateV1);
         assert_eq!(payload.base_text(), "before\n");
         assert_eq!(payload.materialized_text(), "after\n");
         assert!(!payload.conflicted());
         assert_ne!(payload.storage_payload(), "after\n");
+    }
+
+    #[test]
+    fn yrs_update_history_round_trips_against_base_text() {
+        let model = FullTextBodyModel;
+        let payload = model.history_from_stored_revision("before\n", "after\n", false);
+
+        let decoded = model.history_from_storage_record(
+            RetainedBodyHistoryKind::YrsTextUpdateV1,
+            payload.base_text(),
+            payload.storage_payload(),
+            false,
+        );
+        assert_eq!(decoded.kind(), RetainedBodyHistoryKind::YrsTextUpdateV1);
+        assert_eq!(decoded.base_text(), "before\n");
+        assert_eq!(decoded.materialized_text(), "after\n");
+        assert_eq!(decoded.storage_payload(), payload.storage_payload());
+        assert!(!decoded.conflicted());
     }
 
     #[test]
