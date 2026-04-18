@@ -22,6 +22,7 @@ Remote API and storage authority for synchronized workspace state.
 ### `@planned`
 The body-sync layer reconciles concurrent UTF-8 text edits through per-document CRDT state instead of last-write-wins snapshots.
 Until that layer lands, v0 may use deterministic server-side three-way merge with conflict markers as the temporary body-convergence strategy.
+See [BODY_CRDT_DECISION.md](/Users/gk/work/lableaks/projects/projector/BODY_CRDT_DECISION.md) for the current package choice rationale.
 
 ## System shape
 
@@ -35,7 +36,7 @@ For the first implementation, these layers should be cut to the minimum needed f
 
 ## Design stance
 
-The current architecture direction is good enough to proceed, but it should be interpreted as a projection system with a disciplined control loop rather than "some files plus some CRDT plus a daemon."
+The current architecture direction is good enough to proceed, but it should be interpreted as a projection system with a disciplined control loop for mostly text context rather than "some files plus some CRDT plus a daemon."
 
 The key stance is:
 
