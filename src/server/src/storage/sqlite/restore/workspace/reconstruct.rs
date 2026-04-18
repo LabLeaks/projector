@@ -5,9 +5,7 @@ Owns SQLite reconstruction of a workspace snapshot at a historical cursor from a
 // @fileimplements PROJECTOR.SERVER.SQLITE_WORKSPACE_RECONSTRUCTION
 use std::collections::HashMap;
 
-use projector_domain::{
-    BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState,
-};
+use projector_domain::{BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState};
 
 use crate::storage::body_projection::snapshot_from_manifest_entries;
 use crate::storage::sqlite::history::{read_body_revisions, read_path_history};

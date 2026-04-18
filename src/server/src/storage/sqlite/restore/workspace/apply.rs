@@ -66,11 +66,7 @@ pub(super) fn restore_workspace_at_cursor_tx(
                 event.cursor,
                 &request.actor_id,
                 change.document_id.as_str(),
-                &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                    body.base_text,
-                    body.body_text,
-                    false,
-                ),
+                &FULL_TEXT_BODY_MODEL.checkpoint_history(body.base_text, body.body_text),
                 event.timestamp_ms,
             )?;
         }

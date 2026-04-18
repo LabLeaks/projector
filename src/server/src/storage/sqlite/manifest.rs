@@ -122,8 +122,13 @@ pub(super) fn update_document_tx(
 
     let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
     let current_state = body_persistence.load_current_state(&state.snapshot, &document_id);
-    let merge = ThreeWayMergeBodyEngine.apply_update(&request.base_text, &current_state, &request.text);
-    body_persistence.write_current_state(&mut state.snapshot, &document_id, merge.canonical_state());
+    let merge =
+        ThreeWayMergeBodyEngine.apply_update(&request.base_text, &current_state, &request.text);
+    body_persistence.write_current_state(
+        &mut state.snapshot,
+        &document_id,
+        merge.canonical_state(),
+    );
 
     let event = make_event(
         &mut state,

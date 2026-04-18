@@ -13,14 +13,14 @@ use projector_domain::{
     ProvenanceEventKind, RestoreDocumentBodyRevisionRequest, UpdateDocumentRequest,
 };
 
+use super::StoreError;
+use super::body_persistence::{
+    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
+};
 use super::body_state::{
     BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL,
     RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
 };
-use super::body_persistence::{
-    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
-};
-use super::StoreError;
 use super::history::file_read_body_revisions;
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;

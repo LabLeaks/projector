@@ -11,14 +11,14 @@ use projector_domain::{
     MoveDocumentRequest, ProvenanceEvent, ProvenanceEventKind,
 };
 
-use super::body_persistence::{
-    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
-};
-use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use super::StoreError;
 use super::bodies::{
     document_kind_db_value, file_persist_workspace_snapshot, file_read_workspace_snapshot,
 };
+use super::body_persistence::{
+    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
+};
+use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use super::history::{FilePathRevision, file_append_path_revision, insert_path_revision_tx};
 use super::provenance::{
     current_workspace_cursor_tx, file_append_workspace_event, file_workspace_cursor,

@@ -21,7 +21,8 @@ pub(crate) trait SnapshotBodyPersistence {
         snapshot: &BootstrapSnapshot,
         document_id: &DocumentId,
     ) -> CanonicalBodyState {
-        body_state_from_snapshot(snapshot, document_id).unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
+        body_state_from_snapshot(snapshot, document_id)
+            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
     }
 
     fn write_current_state(
@@ -121,10 +122,8 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
 
 #[async_trait]
 pub(crate) trait AsyncBodyPersistence {
-    async fn load_current_state(
-        &self,
-        document_id: &str,
-    ) -> Result<CanonicalBodyState, StoreError>;
+    async fn load_current_state(&self, document_id: &str)
+    -> Result<CanonicalBodyState, StoreError>;
 
     async fn write_current_state(
         &self,

@@ -10,10 +10,7 @@ use crate::storage::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use crate::storage::sqlite::state::{
     append_event, append_path_revision, make_event, save_workspace_state,
 };
-use crate::storage::{
-    StoreError,
-    history::FilePathRevision,
-};
+use crate::storage::{StoreError, history::FilePathRevision};
 
 use super::resolve::DocumentRestoreResolution;
 
@@ -34,7 +31,10 @@ pub(super) fn apply_document_restore(
             .unwrap_or_default(),
     );
     let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
-    let target_state = resolution.target_revision.retained_history().materialized_body_state();
+    let target_state = resolution
+        .target_revision
+        .retained_history()
+        .materialized_body_state();
 
     resolution.state.snapshot.manifest.entries[resolution.entry_index].deleted = false;
     resolution.state.snapshot.manifest.entries[resolution.entry_index].mount_relative_path =

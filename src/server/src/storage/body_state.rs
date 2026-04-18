@@ -22,6 +22,11 @@ pub(crate) trait BodyStateModel {
         materialized_text: impl Into<String>,
         conflicted: bool,
     ) -> RetainedBodyHistoryPayload;
+    fn checkpoint_history(
+        &self,
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+    ) -> RetainedBodyHistoryPayload;
     fn history_from_storage_record(
         &self,
         kind: RetainedBodyHistoryKind,
@@ -126,18 +131,21 @@ pub(crate) fn upsert_body_state(
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RetainedBodyHistoryKind {
     FullTextRevisionV1,
+    FullTextCheckpointV1,
 }
 
 impl RetainedBodyHistoryKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::FullTextRevisionV1 => "full_text_revision_v1",
+            Self::FullTextCheckpointV1 => "full_text_checkpoint_v1",
         }
     }
 
     pub(crate) fn parse(raw: &str) -> Result<Self, String> {
         match raw {
             "full_text_revision_v1" => Ok(Self::FullTextRevisionV1),
+            "full_text_checkpoint_v1" => Ok(Self::FullTextCheckpointV1),
             other => Err(format!("unknown retained body history kind {other}")),
         }
     }
@@ -162,6 +170,18 @@ impl RetainedBodyHistoryPayload {
             base_text: base_text.into(),
             materialized_text: materialized_text.into(),
             conflicted,
+        }
+    }
+
+    fn full_text_checkpoint_v1(
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: RetainedBodyHistoryKind::FullTextCheckpointV1,
+            base_text: base_text.into(),
+            materialized_text: materialized_text.into(),
+            conflicted: false,
         }
     }
 
@@ -234,6 +254,14 @@ impl BodyStateModel for FullTextBodyModel {
         RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, conflicted)
     }
 
+    fn checkpoint_history(
+        &self,
+        base_text: impl Into<String>,
+        materialized_text: impl Into<String>,
+    ) -> RetainedBodyHistoryPayload {
+        RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text)
+    }
+
     fn history_from_storage_record(
         &self,
         kind: RetainedBodyHistoryKind,
@@ -244,6 +272,9 @@ impl BodyStateModel for FullTextBodyModel {
         match kind {
             RetainedBodyHistoryKind::FullTextRevisionV1 => {
                 self.history_from_stored_revision(base_text, materialized_text, conflicted)
+            }
+            RetainedBodyHistoryKind::FullTextCheckpointV1 => {
+                self.checkpoint_history(base_text, materialized_text)
             }
         }
     }
@@ -477,7 +508,10 @@ fn ensure_trailing_newline(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BodyConvergenceEngine, CanonicalBodyState, ThreeWayMergeBodyEngine};
+    use super::{
+        BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FullTextBodyModel,
+        RetainedBodyHistoryKind, ThreeWayMergeBodyEngine,
+    };
 
     #[test]
     fn three_way_engine_merges_non_overlapping_edits() {
@@ -507,6 +541,33 @@ mod tests {
         );
 
         assert!(result.retained_history().conflicted());
-        assert!(result.canonical_state().materialized_text().contains("<<<<<<< existing"));
+        assert!(
+            result
+                .canonical_state()
+                .materialized_text()
+                .contains("<<<<<<< existing")
+        );
+    }
+
+    #[test]
+    fn checkpoint_history_round_trips_as_distinct_kind() {
+        let model = FullTextBodyModel;
+        let payload = model.checkpoint_history("before\n", "after\n");
+
+        assert_eq!(
+            payload.kind(),
+            RetainedBodyHistoryKind::FullTextCheckpointV1
+        );
+        assert_eq!(payload.base_text(), "before\n");
+        assert_eq!(payload.materialized_text(), "after\n");
+        assert!(!payload.conflicted());
+
+        let decoded = model.history_from_storage_record(
+            RetainedBodyHistoryKind::FullTextCheckpointV1,
+            payload.base_text(),
+            payload.materialized_text(),
+            true,
+        );
+        assert_eq!(decoded, payload);
     }
 }

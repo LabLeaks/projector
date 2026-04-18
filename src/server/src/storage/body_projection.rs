@@ -77,7 +77,9 @@ where
         }
     }
 
-    let body_map = body_rows.into_iter().collect::<std::collections::HashMap<_, _>>();
+    let body_map = body_rows
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
     Ok(snapshot_from_manifest_entries(entries, |document_id| {
         body_map
             .get(document_id)

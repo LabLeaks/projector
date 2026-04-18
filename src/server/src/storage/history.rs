@@ -10,6 +10,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::Client;
 
+use super::StoreError;
+use super::bodies::{file_persist_workspace_snapshot, file_read_workspace_snapshot};
 use super::body_persistence::{
     AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
 };
@@ -18,8 +20,6 @@ use super::body_state::{
     BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryKind,
     RetainedBodyHistoryPayload,
 };
-use super::StoreError;
-use super::bodies::{file_persist_workspace_snapshot, file_read_workspace_snapshot};
 use super::provenance::{
     current_workspace_cursor_tx, file_append_workspace_event, file_workspace_cursor,
     insert_event_tx,
@@ -385,11 +385,7 @@ pub(crate) fn file_restore_workspace_at_cursor(
                 event_cursor,
                 &request.actor_id,
                 change.document_id.as_str(),
-                &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                    body.base_text,
-                    body.body_text,
-                    false,
-                ),
+                &FULL_TEXT_BODY_MODEL.checkpoint_history(body.base_text, body.body_text),
                 current_time_ms(),
             )?;
         }
@@ -496,18 +492,19 @@ pub(crate) async fn postgres_list_body_revisions(
             let kind =
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
                     .map_err(StoreError::new)?;
-            Ok(FULL_TEXT_BODY_MODEL.history_from_storage_record(
-                kind,
-                row.get::<_, String>("base_text"),
-                row.get::<_, String>("body_text"),
-                row.get::<_, bool>("conflicted"),
-            )
-            .to_public_revision(
-                row.get::<_, i64>("seq") as u64,
-                row.get::<_, String>("actor_id"),
-                row.get::<_, String>("document_id"),
-                row.get::<_, i64>("timestamp_ms") as u128,
-            ))
+            Ok(FULL_TEXT_BODY_MODEL
+                .history_from_storage_record(
+                    kind,
+                    row.get::<_, String>("base_text"),
+                    row.get::<_, String>("body_text"),
+                    row.get::<_, bool>("conflicted"),
+                )
+                .to_public_revision(
+                    row.get::<_, i64>("seq") as u64,
+                    row.get::<_, String>("actor_id"),
+                    row.get::<_, String>("document_id"),
+                    row.get::<_, i64>("timestamp_ms") as u128,
+                ))
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
     revisions.reverse();
@@ -748,11 +745,7 @@ pub(crate) async fn postgres_restore_workspace_at_cursor(
                     event_cursor,
                     &request.actor_id,
                     change.document_id.as_str(),
-                &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                    body.base_text,
-                    body.body_text,
-                    false,
-                ),
+                    &FULL_TEXT_BODY_MODEL.checkpoint_history(body.base_text, body.body_text),
                 )
                 .await?;
         }
