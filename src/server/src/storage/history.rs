@@ -10,6 +10,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::Client;
 
+use super::body_persistence::{
+    AsyncBodyPersistence, FileBodyPersistence, PostgresBodyPersistence, SnapshotBodyPersistence,
+};
 use super::body_state::{
     BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryPayload,
 };
@@ -363,6 +366,7 @@ pub(crate) fn file_restore_workspace_at_cursor(
     let changes =
         diff_workspace_restore_changes(&current_snapshot, &restored_snapshot, request.cursor);
 
+    let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &restored_snapshot)?;
     for change in changes {
         let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
@@ -381,21 +385,16 @@ pub(crate) fn file_restore_workspace_at_cursor(
             },
         )?;
         if let Some(body) = change.body {
-            file_append_body_revision(
-                state_dir,
-                &request.workspace_id,
-                FileBodyRevision::from_retained_history(
-                    event_cursor,
-                    event_cursor,
-                    request.actor_id.clone(),
-                    change.document_id.as_str().to_owned(),
-                    &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                        body.base_text,
-                        body.body_text,
-                        false,
-                    ),
-                    current_time_ms(),
+            body_persistence.append_retained_history(
+                event_cursor,
+                &request.actor_id,
+                change.document_id.as_str(),
+                &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+                    body.base_text,
+                    body.body_text,
+                    false,
                 ),
+                current_time_ms(),
             )?;
         }
         file_append_path_revision(
@@ -727,21 +726,11 @@ pub(crate) async fn postgres_restore_workspace_at_cursor(
         }
     }
 
+    let body_persistence = PostgresBodyPersistence::new(transaction, &request.workspace_id);
     for body in &restored_snapshot.bodies {
-        transaction
-            .execute(
-                "insert into document_body_snapshots \
-                 (document_id, workspace_id, body_text, compacted_through_seq) \
-                 values ($1, $2, $3, 0) \
-                 on conflict (document_id) do update set body_text = excluded.body_text, updated_at = now()",
-                &[
-                    &body.document_id.as_str(),
-                    &request.workspace_id,
-                    &FULL_TEXT_BODY_MODEL
-                        .state_from_materialized_text(body.text.clone())
-                        .materialized_text(),
-                ],
-            )
+        let state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(body.text.clone());
+        body_persistence
+            .write_current_state(body.document_id.as_str(), &state)
             .await?;
     }
 
@@ -758,19 +747,18 @@ pub(crate) async fn postgres_restore_workspace_at_cursor(
         )
         .await?;
         if let Some(body) = change.body {
-            insert_body_revision_tx(
-                transaction,
-                &request.workspace_id,
-                change.document_id.as_str(),
-                event_cursor,
-                &request.actor_id,
+            body_persistence
+                .append_retained_history(
+                    event_cursor,
+                    &request.actor_id,
+                    change.document_id.as_str(),
                 &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
                     body.base_text,
                     body.body_text,
                     false,
                 ),
-            )
-            .await?;
+                )
+                .await?;
         }
         insert_path_revision_tx(
             transaction,

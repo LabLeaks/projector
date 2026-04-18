@@ -5,12 +5,13 @@ Owns SQLite application of planned workspace rewind changes onto live workspace 
 // @fileimplements PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE_APPLY
 use projector_domain::RestoreWorkspaceRequest;
 
+use crate::storage::body_persistence::{SnapshotBodyPersistence, SqliteBodyPersistence};
 use crate::storage::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use crate::storage::sqlite::state::{
-    append_body_revision, append_event, append_path_revision, load_required_workspace_state,
-    make_event, save_workspace_state,
+    append_event, append_path_revision, load_required_workspace_state, make_event,
+    save_workspace_state,
 };
-use crate::storage::{StoreError, history::FileBodyRevision, history::FilePathRevision};
+use crate::storage::{StoreError, history::FilePathRevision};
 
 use super::plan::diff::diff_workspace_restore_changes;
 use super::reconstruct::{build_restored_live_workspace_snapshot, reconstruct_workspace_at_cursor};
@@ -48,6 +49,7 @@ pub(super) fn restore_workspace_at_cursor_tx(
 
     let mut state = current_state;
     state.snapshot = restored_snapshot;
+    let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
     for change in changes {
         let event = make_event(
             &mut state,
@@ -60,21 +62,16 @@ pub(super) fn restore_workspace_at_cursor_tx(
         );
         append_event(transaction, &request.workspace_id, &event)?;
         if let Some(body) = change.body {
-            append_body_revision(
-                transaction,
-                &request.workspace_id,
-                &FileBodyRevision::from_retained_history(
-                    event.cursor,
-                    event.cursor,
-                    request.actor_id.clone(),
-                    change.document_id.as_str().to_owned(),
-                    &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                        body.base_text,
-                        body.body_text,
-                        false,
-                    ),
-                    event.timestamp_ms,
+            body_persistence.append_retained_history(
+                event.cursor,
+                &request.actor_id,
+                change.document_id.as_str(),
+                &FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+                    body.base_text,
+                    body.body_text,
+                    false,
                 ),
+                event.timestamp_ms,
             )?;
         }
         append_path_revision(
