@@ -29,6 +29,12 @@ Homebrew distribution automation behavior.
 @group PROJECTOR.SERVER
 Server-side workspace state and sync behavior.
 
+@group PROJECTOR.SERVER.AUTH
+Server-side identity and authorization behavior.
+
+@group PROJECTOR.SERVER.HOSTING
+Single-user server hosting model for projector.
+
 @group PROJECTOR.SERVER.DOCUMENTS
 Server-side document lifecycle behavior.
 

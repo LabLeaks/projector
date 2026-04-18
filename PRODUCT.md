@@ -113,6 +113,15 @@ For single-user v0, the recommended lane should be:
 
 The near-term better-DX lane should be guided deployment to a remote box or PaaS target, and the eventual no-deploy lane can be a managed projector cloud with login, team sharing, and authorization.
 
+### @fileattests PROJECTOR.SERVER.HOSTING.BYO_SERVER
+artifact: PRODUCT.md Single-User Server Story and command split describe the shipped named-profile BYO server lane rather than an embedded local-server lane.
+owner: gk
+last_reviewed: 2026-04-18
+
+This product framing matches the shipped `projector connect` and `projector deploy`
+surfaces: users attach repos through named server profiles that refer to
+user-supplied shared authorities.
+
 That suggests a clean command split:
 
 - `projector sync start` / `projector sync stop` for machine-global daemon lifecycle

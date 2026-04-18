@@ -156,3 +156,33 @@ pub(super) fn fill_deploy_defaults(
         yes: args.yes,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::fill_deploy_defaults;
+    use crate::connection_cli::args::DeployArgs;
+
+    #[test]
+    // @verifies PROJECTOR.SERVER.HOSTING.SQLITE_DEFAULT
+    fn deploy_defaults_choose_sqlite_for_byo_remote_setup() {
+        let args = DeployArgs {
+            profile_id: Some("homebox".to_owned()),
+            ssh_target: Some("user@127.0.0.1".to_owned()),
+            server_addr: None,
+            remote_dir: None,
+            sqlite_path: None,
+            listen_addr: None,
+            yes: false,
+        };
+
+        let filled = fill_deploy_defaults(args, false).expect("fill deploy defaults");
+
+        assert_eq!(filled.server_addr.as_deref(), Some("127.0.0.1:8942"));
+        assert_eq!(filled.remote_dir.as_deref(), Some("~/.projector"));
+        assert_eq!(
+            filled.sqlite_path.as_deref(),
+            Some("~/.projector/projector.sqlite3")
+        );
+        assert_eq!(filled.listen_addr.as_deref(), Some("0.0.0.0:8942"));
+    }
+}

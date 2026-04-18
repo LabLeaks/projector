@@ -130,6 +130,25 @@ mod tests {
     }
 
     #[test]
+    // @verifies PROJECTOR.SERVER.HOSTING.POSTGRES_ADVANCED
+    fn parse_serve_args_accepts_postgres_backend() {
+        let args = vec![
+            "--addr".to_owned(),
+            "127.0.0.1:9010".to_owned(),
+            "--postgres-url".to_owned(),
+            "postgres://localhost/projector".to_owned(),
+        ];
+        let (addr, store) = parse_serve_args(&args).expect("parse serve args");
+        assert_eq!(addr, "127.0.0.1:9010");
+        match store {
+            StoreConfig::Postgres(url) => {
+                assert_eq!(url, "postgres://localhost/projector");
+            }
+            other => panic!("expected postgres backend, got {:?}", backend_name(&other)),
+        }
+    }
+
+    #[test]
     fn parse_serve_args_rejects_multiple_backends() {
         let args = vec![
             "--addr".to_owned(),

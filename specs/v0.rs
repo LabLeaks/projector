@@ -168,29 +168,18 @@ Projector can attach a per-sync-entry history retention policy that controls rev
 @planned
 Server history storage can enforce per-sync-entry revision retention and compression policy without affecting the live current body state for that sync entry.
 
-@spec PROJECTOR.SERVER.AUTH
-@planned
-Server-side identity and authorization behavior.
-
 @spec PROJECTOR.SERVER.AUTH.RBAC
 @planned
 Authenticated workspace members can be granted at least `read_only` and `read_write` roles, with write endpoints rejecting read-only actors.
 
-@spec PROJECTOR.SERVER.HOSTING
-@planned
-Single-user v0 assumes one or more user-supplied server profiles rather than a blessed local embedded server mode.
-
 @spec PROJECTOR.SERVER.HOSTING.BYO_SERVER
-@planned
-The base-case single-user deployment story is bring-your-own private servers registered as named profiles and reachable from the repos, machines, and agents that use them.
+Single-user projector workflows attach repos through one or more named user-supplied server profiles rather than through a required embedded local server mode.
 
 @spec PROJECTOR.SERVER.HOSTING.SQLITE_DEFAULT
-@planned
-For single-user BYO deployments, SQLite is the default server store because it keeps deploy, backup, and remote operation simple.
+For the single-user BYO deploy path, `projector deploy` defaults the remote server to one projector-server binary backed by one SQLite database file.
 
 @spec PROJECTOR.SERVER.HOSTING.POSTGRES_ADVANCED
-@planned
-Postgres is the advanced server store for managed cloud, PaaS, or more operationally serious deployments rather than the default single-user BYO path.
+Alongside the default SQLite BYO deploy path, `projector-server serve --postgres-url <url>` supports Postgres as an available backend for more operationally serious deployments.
 
 @spec PROJECTOR.CLI.CONNECT.PERSISTS_GLOBAL_PROFILE_REGISTRY
 `projector connect` interactively, or `projector connect --id <profile> --server <server-addr>`, persists one connected server profile in machine-global projector state.
