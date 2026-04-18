@@ -159,10 +159,12 @@ pub(crate) struct YrsTextCheckpoint {
     merged_update_v1: Vec<u8>,
 }
 
+const PROJECTOR_YRS_SYNTHETIC_TEXT_CLIENT_ID: u64 = 1;
+
 #[cfg_attr(not(test), allow(dead_code))]
 impl YrsTextCheckpoint {
     pub(crate) fn from_materialized_text(text: &str) -> Result<Self, String> {
-        let doc = Doc::new();
+        let doc = Doc::with_client_id(PROJECTOR_YRS_SYNTHETIC_TEXT_CLIENT_ID);
         let body = doc.get_or_insert_text("body");
         let mut txn = doc.transact_mut();
         body.push(&mut txn, text);
@@ -293,7 +295,6 @@ pub(crate) struct RetainedBodyHistoryPayload {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct StoredYrsTextUpdateV1 {
     update_v1_hex: String,
-    materialized_text: String,
 }
 
 impl RetainedBodyHistoryPayload {
@@ -351,7 +352,6 @@ impl RetainedBodyHistoryPayload {
             base_text: base_text.into(),
             storage_payload: serde_json::to_string(&StoredYrsTextUpdateV1 {
                 update_v1_hex: encode_hex(update_v1),
-                materialized_text: materialized_text.clone(),
             })
             .expect("yrs text update payload should serialize"),
             materialized_text,
@@ -507,10 +507,16 @@ impl BodyStateModel for FullTextBodyModel {
                     .expect("stored yrs update payload should parse");
                 let update_v1 = decode_hex(&stored.update_v1_hex)
                     .expect("stored yrs update payload should decode");
+                let materialized_text = YrsTextCheckpoint::from_materialized_text(&base_text)
+                    .expect("base text should convert into a yrs checkpoint")
+                    .with_update_v1(&update_v1)
+                    .expect("stored yrs update payload should apply")
+                    .materialized_text()
+                    .expect("stored yrs update payload should materialize");
                 RetainedBodyHistoryPayload::yrs_text_update_v1(
                     base_text,
                     &update_v1,
-                    stored.materialized_text,
+                    materialized_text,
                 )
             }
         }
@@ -834,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn non_conflicted_history_defaults_to_yrs_checkpoint_payload() {
+    fn non_conflicted_history_defaults_to_yrs_update_payload() {
         let model = FullTextBodyModel;
         let payload = model.history_from_stored_revision("before\n", "after\n", false);
 
@@ -843,6 +849,7 @@ mod tests {
         assert_eq!(payload.materialized_text(), "after\n");
         assert!(!payload.conflicted());
         assert_ne!(payload.storage_payload(), "after\n");
+        assert!(!payload.storage_payload().contains("after\n"));
     }
 
     #[test]
