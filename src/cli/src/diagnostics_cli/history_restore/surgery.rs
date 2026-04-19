@@ -1,6 +1,6 @@
 /**
 @module PROJECTOR.EDGE.HISTORY_SURGERY_CLI
-Owns scripted retained-history redaction and purge flows by resolving a repo-relative path to one live bound document, previewing the retained impact, and requiring `--confirm` to apply surgery.
+Owns retained-history redaction and purge flows by resolving a repo-relative path to one live bound document, previewing the retained impact, and applying surgery only after scripted or interactive confirmation.
 */
 // @fileimplements PROJECTOR.EDGE.HISTORY_SURGERY_CLI
 use std::error::Error;
@@ -15,13 +15,15 @@ use crate::sync_entry_cli::{
 };
 
 use super::args::{parse_purge_args, parse_redact_args};
+use super::redact_browser::{RedactBrowserExit, browse_redaction_matches};
 
 pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let redact_args = parse_redact_args(&args)?;
     let mut prepared = prepare_document_history_surgery(&redact_args.repo_relative_path)?;
-    let revisions = prepared
-        .transport
-        .list_body_revisions(&prepared.binding, &prepared.document_id, 20)?;
+    let revisions =
+        prepared
+            .transport
+            .list_body_revisions(&prepared.binding, &prepared.document_id, 20)?;
     let matching_revisions = revisions
         .iter()
         .filter(|revision| {
@@ -29,6 +31,7 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 || revision.body_text.contains(&redact_args.exact_text)
         })
         .collect::<Vec<_>>();
+    let matching_revision_count = matching_revisions.len();
     if matching_revisions.is_empty() {
         return Err(format!(
             "no retained revisions for {} contain the exact text {:?}",
@@ -38,15 +41,47 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         .into());
     }
 
+    if is_interactive_terminal() && !redact_args.confirm {
+        let matching_revisions = matching_revisions
+            .iter()
+            .map(|revision| (*revision).clone())
+            .collect::<Vec<_>>();
+        match browse_redaction_matches(
+            &prepared.requested_path,
+            &redact_args.exact_text,
+            &matching_revisions,
+        )? {
+            RedactBrowserExit::Apply { selected_seq } => {
+                println!("matching_revisions: {matching_revision_count}");
+                println!("selected_seq: {selected_seq}");
+                prepared.transport.redact_document_body_history(
+                    &prepared.binding,
+                    &prepared.document_id,
+                    &redact_args.exact_text,
+                )?;
+                println!("redaction: applied");
+            }
+            RedactBrowserExit::Cancelled { selected_seq } => {
+                println!("matching_revisions: {matching_revision_count}");
+                println!("selected_seq: {selected_seq}");
+                println!("redaction: cancelled");
+            }
+        }
+        return Ok(());
+    }
+
     println!("path: {}", prepared.requested_path.display());
     println!("document_id: {}", prepared.document_id.as_str());
-    println!("matching_revisions: {}", matching_revisions.len());
+    println!("matching_revisions: {matching_revision_count}");
     println!("replacement: [REDACTED]");
     for revision in &matching_revisions {
         print_redaction_match(revision, &redact_args.exact_text);
     }
 
-    if !should_apply_history_surgery(redact_args.confirm, "Apply retained-history redaction? [y/N] ")? {
+    if !should_apply_history_surgery(
+        redact_args.confirm,
+        "Apply retained-history redaction? [y/N] ",
+    )? {
         println!("next: rerun with --confirm to apply this redaction");
         if is_interactive_terminal() {
             println!("redaction: cancelled");
@@ -66,9 +101,10 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let purge_args = parse_purge_args(&args)?;
     let mut prepared = prepare_document_history_surgery(&purge_args.repo_relative_path)?;
-    let revisions = prepared
-        .transport
-        .list_body_revisions(&prepared.binding, &prepared.document_id, 20)?;
+    let revisions =
+        prepared
+            .transport
+            .list_body_revisions(&prepared.binding, &prepared.document_id, 20)?;
     if revisions.is_empty() {
         return Err(format!(
             "document at {} does not have any retained body revisions",
@@ -167,8 +203,8 @@ fn should_apply_history_surgery(confirm_flag: bool, prompt: &str) -> Result<bool
 }
 
 fn print_redaction_match(revision: &projector_domain::DocumentBodyRevision, exact_text: &str) {
-    let occurrences =
-        revision.base_text.matches(exact_text).count() + revision.body_text.matches(exact_text).count();
+    let occurrences = revision.base_text.matches(exact_text).count()
+        + revision.body_text.matches(exact_text).count();
     println!(
         "match: seq={} kind={} occurrences={}",
         revision.seq, revision.history_kind, occurrences

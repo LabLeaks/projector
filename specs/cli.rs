@@ -44,6 +44,9 @@ When materialized text files contain projector conflict markers from a concurren
 @spec PROJECTOR.CLI.REDACT.INTERACTIVE_CONFIRMATION
 When `projector redact <exact-text> <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector previews the matching retained revisions and can apply the redaction after terminal confirmation.
 
+@spec PROJECTOR.CLI.REDACT.BROWSES_MATCHING_REVISIONS
+When `projector redact <exact-text> <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector opens a terminal browser over the matching retained revisions before applying.
+
 @spec PROJECTOR.CLI.PURGE.PREVIEWS_AND_APPLIES_RETAINED_HISTORY_SURGERY
 `projector purge <repo-relative-path>` previews how many retained revisions for the bound live document would be cleared, and adding `--confirm` clears the retained body content while leaving live current document state unchanged.
 

@@ -5,6 +5,7 @@ Coordinates history inspection and restore flows by delegating argument parsing,
 // @fileimplements PROJECTOR.EDGE.HISTORY_RESTORE_CLI
 mod args;
 mod history;
+mod redact_browser;
 mod render;
 mod restore;
 mod surgery;

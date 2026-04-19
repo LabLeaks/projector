@@ -14,10 +14,10 @@ use projector_domain::{
     DocumentKind, DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse,
     ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
     ManifestEntry, ManifestState, ProjectionRoots, ProvenanceEvent, ProvenanceEventKind,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
-    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RepoSyncConfig, RepoSyncEntry,
-    ResolveHistoricalPathRequest, ResolveHistoricalPathResponse, RestoreWorkspaceRequest,
-    SyncContext, SyncEntryKind, WorkspaceId,
+    PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
+    RedactDocumentBodyHistoryRequest, RepoSyncConfig, RepoSyncEntry, ResolveHistoricalPathRequest,
+    ResolveHistoricalPathResponse, RestoreWorkspaceRequest, SyncContext, SyncEntryKind,
+    WorkspaceId,
 };
 use projector_runtime::{
     BindingStore, FileBindingStore, FileMachineSyncRegistryStore, FileProvenanceLog,
@@ -3794,7 +3794,9 @@ fn server_can_purge_retained_document_body_history_for_one_document() {
             .all(|revision| revision.base_text.is_empty() && revision.body_text.is_empty())
     );
 
-    let (live_snapshot, _) = transport.bootstrap(&binding).expect("bootstrap after purge");
+    let (live_snapshot, _) = transport
+        .bootstrap(&binding)
+        .expect("bootstrap after purge");
     let live_body = live_snapshot
         .bodies
         .iter()
@@ -4240,10 +4242,7 @@ fn assert_projector_redact_rewrites_history() {
     .expect("write update");
     run_projector(&repo, &["sync"]);
 
-    let preview = run_projector(
-        &repo,
-        &["redact", secret, "private/briefs/cli-redact.html"],
-    );
+    let preview = run_projector(&repo, &["redact", secret, "private/briefs/cli-redact.html"]);
     assert!(preview.contains("path: private/briefs/cli-redact.html"));
     assert!(preview.contains("matching_revisions: 2"));
     assert!(preview.contains("replacement: [REDACTED]"));
@@ -4257,7 +4256,12 @@ fn assert_projector_redact_rewrites_history() {
 
     let applied = run_projector(
         &repo,
-        &["redact", "--confirm", secret, "private/briefs/cli-redact.html"],
+        &[
+            "redact",
+            "--confirm",
+            secret,
+            "private/briefs/cli-redact.html",
+        ],
     );
     assert!(applied.contains("redaction: applied"));
 
@@ -4335,7 +4339,9 @@ fn assert_projector_purge_clears_retained_history_and_records_audit() {
             && event.summary.contains("purged retained body history")
     }));
 
-    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap after purge");
+    let (snapshot, _) = transport
+        .bootstrap(&binding)
+        .expect("bootstrap after purge");
     let document_id = snapshot
         .manifest
         .entries
@@ -4350,9 +4356,11 @@ fn assert_projector_purge_clears_retained_history_and_records_audit() {
         .as_str()
         .to_owned();
     let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
-    assert!(revisions
-        .iter()
-        .all(|revision| revision.base_text.is_empty() && revision.body_text.is_empty()));
+    assert!(
+        revisions
+            .iter()
+            .all(|revision| revision.base_text.is_empty() && revision.body_text.is_empty())
+    );
 }
 
 // @verifies PROJECTOR.CLI.PURGE.PREVIEWS_AND_APPLIES_RETAINED_HISTORY_SURGERY
@@ -4395,14 +4403,57 @@ fn projector_redact_can_apply_after_terminal_confirmation() {
     let output = run_projector_tty(
         &repo,
         &["redact", secret, "private/briefs/cli-redact-tty.html"],
-        "y\n",
+        "\ry",
     );
-    assert!(output.contains("Apply retained-history redaction? [y/N]"));
+    assert!(output.contains("matching_revisions: 1"));
+    assert!(output.contains("selected_seq: 1"));
     assert!(output.contains("redaction: applied"));
 
     let history = run_projector(&repo, &["history", "private/briefs/cli-redact-tty.html"]);
     assert!(!history.contains(secret));
     assert!(history.contains("[REDACTED]"));
+}
+
+// @verifies PROJECTOR.CLI.REDACT.BROWSES_MATCHING_REVISIONS
+#[test]
+fn projector_redact_uses_tty_browser_to_preview_matching_revisions() {
+    let repo = temp_repo("cli-redact-browser");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    let secret = "SECRET-123";
+    fs::write(
+        repo.join("private/briefs/cli-redact-browser.html"),
+        format!("<p>created {secret} revision</p>\n"),
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/cli-redact-browser.html"),
+        format!("<p>updated {secret} revision</p>\n"),
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let output = run_projector_tty(
+        &repo,
+        &["redact", secret, "private/briefs/cli-redact-browser.html"],
+        "q",
+    );
+    assert!(output.contains("matching_revisions: 2"));
+    assert!(output.contains("selected_seq: 1"));
+    assert!(output.contains("redaction: cancelled"));
+
+    let history = run_projector(
+        &repo,
+        &["history", "private/briefs/cli-redact-browser.html"],
+    );
+    assert!(history.contains(secret));
 }
 
 // @verifies PROJECTOR.CLI.PURGE.INTERACTIVE_CONFIRMATION
