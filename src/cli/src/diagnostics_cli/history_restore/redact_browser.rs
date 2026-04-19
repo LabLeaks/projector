@@ -7,7 +7,6 @@ use std::error::Error;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
@@ -21,6 +20,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+
+use crate::browser_ui::{centered_rect, format_unix_timestamp};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RedactBrowserExit {
@@ -295,33 +296,5 @@ fn abbreviate_actor(actor_id: &str) -> String {
 }
 
 fn format_timestamp(timestamp_ms: u128) -> String {
-    let secs = (timestamp_ms / 1_000) as u64;
-    let system_time = UNIX_EPOCH + Duration::from_secs(secs);
-    match system_time.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => format!("unix={}s", duration.as_secs()),
-        Err(_) => format!("unix={}s", secs),
-    }
-}
-
-fn centered_rect(
-    percent_x: u16,
-    percent_y: u16,
-    area: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
+    format_unix_timestamp(timestamp_ms)
 }

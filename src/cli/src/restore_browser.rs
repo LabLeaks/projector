@@ -22,6 +22,8 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
+use crate::browser_ui::centered_rect;
+
 #[derive(Clone, Debug)]
 pub(crate) struct RestoreSelection {
     pub(crate) seq: u64,
@@ -406,29 +408,6 @@ fn format_timestamp(timestamp_ms: u128) -> String {
     } else {
         format!("{}h ago", seconds / 3600)
     }
-}
-
-fn centered_rect(
-    percent_x: u16,
-    percent_y: u16,
-    area: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
 }
 
 fn split_lines_for_diff(text: &str) -> Vec<String> {

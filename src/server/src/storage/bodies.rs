@@ -1,8 +1,8 @@
 /**
-@module PROJECTOR.SERVER.BODIES
-Owns body snapshot persistence, body read projection, and document body updates for file-backed and Postgres-backed stores.
+@module PROJECTOR.SERVER.BODY_MUTATIONS
+Owns document body update and restore mutation flows above the body-state, body-persistence, and retained-history seams.
 */
-// @fileimplements PROJECTOR.SERVER.BODIES
+// @fileimplements PROJECTOR.SERVER.BODY_MUTATIONS
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};

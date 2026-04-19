@@ -7,6 +7,7 @@ use std::env;
 use std::error::Error;
 use std::process;
 
+mod browser_ui;
 mod cli_support;
 mod connection_cli;
 mod daemon_cli;
