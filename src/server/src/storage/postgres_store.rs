@@ -22,6 +22,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0003_history_workspace_cursor.sql"),
     include_str!("../../migrations/0004_sync_entry_metadata.sql"),
     include_str!("../../migrations/0005_body_storage_kinds.sql"),
+    include_str!("../../migrations/0006_body_history_checkpoint_anchors.sql"),
 ];
 
 pub struct PostgresWorkspaceStore {

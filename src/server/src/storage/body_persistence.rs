@@ -11,7 +11,7 @@ use projector_domain::{BootstrapSnapshot, DocumentId};
 use super::StoreError;
 use super::body_state::{
     BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind, FULL_TEXT_BODY_MODEL,
-    RetainedBodyHistoryPayload, body_state_from_snapshot, upsert_body_state,
+    RetainedBodyHistoryPayload, YrsTextCheckpoint, body_state_from_snapshot, upsert_body_state,
 };
 use super::history::{
     FileBodyRevision, file_append_body_revision, file_read_body_revisions, insert_body_revision_tx,
@@ -211,17 +211,25 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         document_id: &str,
         state: &CanonicalBodyState,
     ) -> Result<(), StoreError> {
+        let (yjs_state, state_vector) = postgres_checkpoint_artifacts(state)?;
         self.transaction
             .execute(
                 "insert into document_body_snapshots \
-                 (document_id, workspace_id, state_kind, body_text, compacted_through_seq) \
-                 values ($1, $2, $3, $4, 0) \
-                 on conflict (document_id) do update set state_kind = excluded.state_kind, body_text = excluded.body_text, updated_at = now()",
+                 (document_id, workspace_id, state_kind, body_text, yjs_state, state_vector, compacted_through_seq) \
+                 values ($1, $2, $3, $4, $5, $6, 0) \
+                 on conflict (document_id) do update set \
+                   state_kind = excluded.state_kind, \
+                   body_text = excluded.body_text, \
+                   yjs_state = excluded.yjs_state, \
+                   state_vector = excluded.state_vector, \
+                   updated_at = now()",
                 &[
                     &document_id,
                     &self.workspace_id,
                     &state.kind().as_str(),
                     &state.storage_payload(),
+                    &yjs_state,
+                    &state_vector,
                 ],
             )
             .await?;
@@ -267,6 +275,33 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
             checkpoint_anchor_seq,
             payload,
         )
-        .await
+        .await?;
+        if payload.kind() != super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            self.transaction
+                .execute(
+                    "update document_body_snapshots \
+                     set compacted_through_seq = $3, updated_at = now() \
+                     where workspace_id = $1 and document_id = $2",
+                    &[&self.workspace_id, &document_id, &(event_cursor as i64)],
+                )
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+fn postgres_checkpoint_artifacts(
+    state: &CanonicalBodyState,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), StoreError> {
+    match state.kind() {
+        CanonicalBodyStateKind::FullTextMergeV1 => Ok((None, None)),
+        CanonicalBodyStateKind::YrsTextCheckpointV1 => {
+            let checkpoint = YrsTextCheckpoint::from_storage_payload(state.storage_payload())
+                .map_err(StoreError::new)?;
+            Ok((
+                Some(checkpoint.checkpoint_bytes().to_vec()),
+                Some(checkpoint.state_vector_v1().map_err(StoreError::new)?),
+            ))
+        }
     }
 }
