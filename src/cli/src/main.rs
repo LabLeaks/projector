@@ -37,6 +37,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("log") => diagnostics_cli::run_log(),
         Some("history") => diagnostics_cli::run_history(args.collect()),
         Some("restore") => diagnostics_cli::run_restore(args.collect()),
+        Some("redact") => diagnostics_cli::run_redact(args.collect()),
+        Some("purge") => diagnostics_cli::run_purge(args.collect()),
         Some("daemon") => daemon_cli::run_daemon(args.collect()),
         _ => {
             cli_support::print_usage();

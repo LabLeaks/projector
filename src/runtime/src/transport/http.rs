@@ -12,7 +12,8 @@ use projector_domain::{
     DocumentBodyRevision, DocumentId, DocumentPathRevision, ListBodyRevisionsRequest,
     ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
     ListPathRevisionsResponse, ListSyncEntriesRequest, ListSyncEntriesResponse,
-    MoveDocumentRequest, ProvenanceEvent, ReconstructWorkspaceRequest,
+    MoveDocumentRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
+    RedactDocumentBodyHistoryRequest, ReconstructWorkspaceRequest,
     ReconstructWorkspaceResponse, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncContext, SyncEntrySummary,
     UpdateDocumentRequest,
@@ -352,6 +353,54 @@ impl Transport for HttpTransport {
 
         if !response.status().is_success() {
             return Err(response_error("restore body revision request", response));
+        }
+
+        Ok(())
+    }
+
+    fn redact_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+        exact_text: &str,
+    ) -> Result<(), Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/body/redact", self.base_url))
+            .json(&RedactDocumentBodyHistoryRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                actor_id: binding.actor_id().as_str().to_owned(),
+                document_id: document_id.as_str().to_owned(),
+                exact_text: exact_text.to_owned(),
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error("redact body history request", response));
+        }
+
+        Ok(())
+    }
+
+    fn purge_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+    ) -> Result<(), Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/body/purge", self.base_url))
+            .json(&PurgeDocumentBodyHistoryRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                actor_id: binding.actor_id().as_str().to_owned(),
+                document_id: document_id.as_str().to_owned(),
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error("purge body history request", response));
         }
 
         Ok(())

@@ -962,6 +962,23 @@ impl Transport for RejectCreateTransport {
         Ok(())
     }
 
+    fn redact_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _exact_text: &str,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn purge_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn resolve_document_by_historical_path(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1119,6 +1136,23 @@ impl Transport for RetryAfterRebootstrapTransport {
         Ok(())
     }
 
+    fn redact_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _exact_text: &str,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn purge_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn resolve_document_by_historical_path(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1270,6 +1304,23 @@ impl Transport for RetryImmediatelyTransport {
         _seq: u64,
         _target_mount_relative_path: Option<&Path>,
         _target_relative_path: Option<&Path>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn redact_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _exact_text: &str,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn purge_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -4163,6 +4214,158 @@ fn history_workspace_reconstruction_preserves_earlier_cursor_state() {
     assert!(history.contains("deleted=false path=private/briefs/workspace-restorable.html"));
     assert!(history.contains("text=\"<p>created revision</p>\\n\""));
     assert!(!history.contains("notes/archive/workspace-restorable.html"));
+}
+
+fn assert_projector_redact_rewrites_history() {
+    let repo = temp_repo("cli-redact");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    let secret = "SECRET-123";
+    fs::write(
+        repo.join("private/briefs/cli-redact.html"),
+        format!("<p>created {secret} revision</p>\n"),
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/cli-redact.html"),
+        format!("<p>updated {secret} revision</p>\n"),
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let preview = run_projector(
+        &repo,
+        &["redact", secret, "private/briefs/cli-redact.html"],
+    );
+    assert!(preview.contains("path: private/briefs/cli-redact.html"));
+    assert!(preview.contains("matching_revisions: 2"));
+    assert!(preview.contains("replacement: [REDACTED]"));
+    assert!(preview.contains("next: rerun with --confirm to apply this redaction"));
+
+    let before = run_projector(&repo, &["history", "private/briefs/cli-redact.html"]);
+    assert!(before.contains(secret));
+
+    let applied = run_projector(
+        &repo,
+        &["redact", "--confirm", secret, "private/briefs/cli-redact.html"],
+    );
+    assert!(applied.contains("redaction: applied"));
+
+    let after = run_projector(&repo, &["history", "private/briefs/cli-redact.html"]);
+    assert!(!after.contains(secret));
+    assert!(after.contains("[REDACTED]"));
+}
+
+// @verifies PROJECTOR.CLI.REDACT.PREVIEWS_AND_APPLIES_EXACT_TEXT_REWRITE
+#[test]
+fn projector_redact_previews_then_applies_exact_text_history_rewrite() {
+    assert_projector_redact_rewrites_history();
+}
+
+// @verifies PROJECTOR.HISTORY.CONTENT_REDACTION
+#[test]
+fn history_content_redaction_rewrites_exact_text_by_path() {
+    assert_projector_redact_rewrites_history();
+}
+
+fn assert_projector_purge_clears_retained_history_and_records_audit() {
+    let repo = temp_repo("cli-purge");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    let workspace_id = first_sync
+        .lines()
+        .find_map(|line| line.strip_prefix("workspace_id: "))
+        .expect("workspace id")
+        .to_owned();
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/cli-purge.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/cli-purge.html"),
+        "<p>updated revision</p>\n",
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let preview = run_projector(&repo, &["purge", "private/briefs/cli-purge.html"]);
+    assert!(preview.contains("path: private/briefs/cli-purge.html"));
+    assert!(preview.contains("retained_revisions: 2"));
+    assert!(preview.contains("clearable_revisions: 2"));
+    assert!(preview.contains("next: rerun with --confirm to purge retained history"));
+
+    let history_before = run_projector(&repo, &["history", "private/briefs/cli-purge.html"]);
+    assert!(history_before.contains("<p>updated revision</p>"));
+
+    let applied = run_projector(
+        &repo,
+        &["purge", "--confirm", "private/briefs/cli-purge.html"],
+    );
+    assert!(applied.contains("purge: applied"));
+
+    let history_after = run_projector(&repo, &["history", "private/briefs/cli-purge.html"]);
+    assert!(history_after.contains("body_revisions: 2"));
+    assert!(history_after.contains("snapshot_text: \"\""));
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let events = transport.provenance(&binding, 20).expect("list provenance");
+    assert!(events.iter().any(|event| {
+        event.kind == projector_domain::ProvenanceEventKind::DocumentHistoryPurged
+            && event.summary.contains("purged retained body history")
+    }));
+
+    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap after purge");
+    let document_id = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| {
+            !entry.deleted
+                && entry.mount_relative_path == Path::new("private")
+                && entry.relative_path == Path::new("briefs/cli-purge.html")
+        })
+        .expect("created entry")
+        .document_id
+        .as_str()
+        .to_owned();
+    let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
+    assert!(revisions
+        .iter()
+        .all(|revision| revision.base_text.is_empty() && revision.body_text.is_empty()));
+}
+
+// @verifies PROJECTOR.CLI.PURGE.PREVIEWS_AND_APPLIES_RETAINED_HISTORY_SURGERY
+#[test]
+fn projector_purge_previews_then_applies_retained_history_surgery() {
+    assert_projector_purge_clears_retained_history_and_records_audit();
+}
+
+// @verifies PROJECTOR.HISTORY.DOCUMENT_HISTORY_PURGE
+#[test]
+fn history_purge_clears_retained_history_by_path() {
+    assert_projector_purge_clears_retained_history_and_records_audit();
+}
+
+// @verifies PROJECTOR.HISTORY.DESTRUCTIVE_HISTORY_AUDIT
+#[test]
+fn history_purge_records_non_secret_audit_trail() {
+    assert_projector_purge_clears_retained_history_and_records_audit();
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR

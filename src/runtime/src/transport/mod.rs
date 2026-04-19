@@ -97,4 +97,15 @@ pub trait Transport {
         target_mount_relative_path: Option<&Path>,
         target_relative_path: Option<&Path>,
     ) -> Result<(), Self::Error>;
+    fn redact_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+        exact_text: &str,
+    ) -> Result<(), Self::Error>;
+    fn purge_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+    ) -> Result<(), Self::Error>;
 }

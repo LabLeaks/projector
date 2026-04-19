@@ -29,6 +29,17 @@ pub(super) struct RestoreArgs {
     pub(super) confirm: bool,
 }
 
+pub(super) struct RedactArgs {
+    pub(super) exact_text: String,
+    pub(super) repo_relative_path: String,
+    pub(super) confirm: bool,
+}
+
+pub(super) struct PurgeArgs {
+    pub(super) repo_relative_path: String,
+    pub(super) confirm: bool,
+}
+
 pub(super) enum RestoreSelector {
     Seq(u64),
     Previous,
@@ -126,6 +137,49 @@ pub(super) fn parse_restore_args(args: &[String]) -> Result<RestoreArgs, Box<dyn
         repo_relative_path: repo_relative_path
             .ok_or("restore requires a repo-relative path argument")?,
         selector,
+        confirm,
+    })
+}
+
+pub(super) fn parse_redact_args(args: &[String]) -> Result<RedactArgs, Box<dyn Error>> {
+    let mut confirm = false;
+    let mut positionals = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--confirm" => confirm = true,
+            other => positionals.push(other.to_owned()),
+        }
+    }
+    let [exact_text, repo_relative_path] = positionals.as_slice() else {
+        return Err("redact requires <exact-text> <repo-relative-path>".into());
+    };
+    if exact_text.is_empty() {
+        return Err("redact exact text must not be empty".into());
+    }
+    Ok(RedactArgs {
+        exact_text: exact_text.clone(),
+        repo_relative_path: repo_relative_path.clone(),
+        confirm,
+    })
+}
+
+pub(super) fn parse_purge_args(args: &[String]) -> Result<PurgeArgs, Box<dyn Error>> {
+    let mut confirm = false;
+    let mut repo_relative_path = None;
+    for arg in args {
+        match arg.as_str() {
+            "--confirm" => confirm = true,
+            other => {
+                if repo_relative_path.is_some() {
+                    return Err(format!("unexpected extra purge argument: {other}").into());
+                }
+                repo_relative_path = Some(other.to_owned());
+            }
+        }
+    }
+    Ok(PurgeArgs {
+        repo_relative_path: repo_relative_path
+            .ok_or("purge requires a repo-relative path argument")?,
         confirm,
     })
 }

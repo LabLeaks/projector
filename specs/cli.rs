@@ -38,6 +38,12 @@ When materialized text files contain projector conflict markers from a concurren
 @spec PROJECTOR.CLI.HISTORY.RENDERS_WORKSPACE_RECONSTRUCTION
 `projector history --cursor <workspace-cursor>` renders the reconstructed workspace manifest and live text bodies for that earlier workspace cursor.
 
+@spec PROJECTOR.CLI.REDACT.PREVIEWS_AND_APPLIES_EXACT_TEXT_REWRITE
+`projector redact <exact-text> <repo-relative-path>` previews how many retained revisions for the bound live document contain that exact text, and adding `--confirm` rewrites those retained revisions by replacing exact matches with `[REDACTED]`.
+
+@spec PROJECTOR.CLI.PURGE.PREVIEWS_AND_APPLIES_RETAINED_HISTORY_SURGERY
+`projector purge <repo-relative-path>` previews how many retained revisions for the bound live document would be cleared, and adding `--confirm` clears the retained body content while leaving live current document state unchanged.
+
 @spec PROJECTOR.CLI.CONNECT.PERSISTS_GLOBAL_PROFILE_REGISTRY
 `projector connect` interactively, or `projector connect --id <profile> --server <server-addr>`, persists one connected server profile in machine-global projector state.
 

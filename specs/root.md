@@ -55,6 +55,12 @@ Remote sync-entry discovery and materialization behavior.
 ### `@group PROJECTOR.CLI.HISTORY`
 CLI history command behavior.
 
+### `@group PROJECTOR.CLI.REDACT`
+CLI retained-history redaction behavior.
+
+### `@group PROJECTOR.CLI.PURGE`
+CLI retained-history purge behavior.
+
 ### `@group PROJECTOR.CLI.STATUS`
 Status command behavior.
 

@@ -42,15 +42,12 @@ Projector resolves the effective history compaction policy for one file from the
 Projector keeps the most recent 100 document body revisions at full fidelity and retains 1 checkpoint out of every 10 older revisions unless a nearer path policy overrides that default.
 
 @spec PROJECTOR.HISTORY.CONTENT_REDACTION
-@planned
-Projector can rewrite one document's retained checkpoint and update history to redact selected sensitive content everywhere that exact content appears while preserving the document's readable retained history.
+Projector can rewrite one document's retained checkpoint and update history by repo-relative path to replace exact matched text with `[REDACTED]` while preserving the document's readable retained history.
 
 @spec PROJECTOR.HISTORY.DOCUMENT_HISTORY_PURGE
-@planned
 Projector can purge one document's retained historical body content by path without deleting the surrounding non-secret audit record that history surgery happened.
 
 @spec PROJECTOR.HISTORY.DESTRUCTIVE_HISTORY_AUDIT
-@planned
 Projector records destructive document-history surgery durably without retaining the removed sensitive content in its audit trail.
 
 @spec PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_BODY_REVISIONS
