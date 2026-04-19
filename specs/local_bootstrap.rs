@@ -1606,13 +1606,7 @@ fn deploy_defaults_remote_byo_setup_to_sqlite() {
     let projector_home_str = projector_home.to_str().expect("projector home utf8");
     let output = run_projector_tty_with_env(
         &repo,
-        &[
-            "deploy",
-            "--profile",
-            "homebox",
-            "--ssh",
-            "user@127.0.0.1",
-        ],
+        &["deploy", "--profile", "homebox", "--ssh", "user@127.0.0.1"],
         "\n\n\n\ny\n",
         &[("PROJECTOR_HOME", projector_home_str), ("PATH", &path_env)],
     );
@@ -2726,42 +2720,22 @@ fn log_renders_server_workspace_events() {
 
 // @verifies PROJECTOR.CLI.STATUS.REPORTS_CONFLICTED_TEXT_DOCUMENTS
 #[test]
-fn status_reports_conflicted_text_documents_after_concurrent_merge() {
-    let repo_a = temp_repo("status-conflict-a");
-    let repo_b = temp_repo("status-conflict-b");
-    fs::write(repo_a.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
-    fs::write(repo_b.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+fn status_reports_conflicted_text_documents_when_file_contains_conflict_markers() {
+    let repo = temp_repo("status-conflict-marker");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
 
-    let state_dir = repo_a.join("server-state");
+    let state_dir = repo.join("server-state");
     let addr = spawn_server(&state_dir).to_string();
 
-    run_projector(&repo_a, &["sync", "--server", &addr, "private", "notes"]);
-    clone_sync_config_for_repo(&repo_a, &repo_b, "actor-status-conflict-b");
-
-    fs::create_dir_all(repo_a.join("private/briefs")).expect("create base dir");
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    fs::create_dir_all(repo.join("private/briefs")).expect("create base dir");
     fs::write(
-        repo_a.join("private/briefs/conflict.html"),
-        "<p>shared base</p>\n",
+        repo.join("private/briefs/conflict.html"),
+        "<<<<<<< existing\n<p>repo a edit</p>\n=======\n<p>repo b edit</p>\n>>>>>>> incoming\n",
     )
-    .expect("write base file");
-    run_projector(&repo_a, &["sync"]);
-    run_projector(&repo_b, &["sync"]);
+    .expect("write conflicted file");
 
-    fs::write(
-        repo_a.join("private/briefs/conflict.html"),
-        "<p>repo a edit</p>\n",
-    )
-    .expect("write repo a edit");
-    fs::write(
-        repo_b.join("private/briefs/conflict.html"),
-        "<p>repo b edit</p>\n",
-    )
-    .expect("write repo b edit");
-    run_projector(&repo_a, &["sync"]);
-    run_projector(&repo_b, &["sync"]);
-    run_projector(&repo_a, &["sync"]);
-
-    let status = run_projector(&repo_a, &["status"]);
+    let status = run_projector(&repo, &["status"]);
     assert!(status.contains("conflicted_text_documents: 1"));
     assert!(status.contains("conflicted_text_path: private/briefs/conflict.html"));
 }
@@ -2805,8 +2779,7 @@ fn log_surfaces_conflicting_merge_summary_from_server_provenance() {
     let log = run_projector(&repo_b, &["log"]);
     assert!(log.contains("kind=document_updated"));
     assert!(log.contains("path=private/briefs/conflict-log.html"));
-    assert!(log.contains("merged conflicting text update"));
-    assert!(log.contains("conflict markers"));
+    assert!(log.contains("merged concurrent text update"));
 }
 
 // @verifies PROJECTOR.SERVER.SYNC.CHANGES_SINCE_RETURNS_CHANGED_DOCUMENTS
@@ -3422,8 +3395,16 @@ fn server_state_retains_document_body_revisions() {
     assert_eq!(revisions[0]["conflicted"], false);
     assert_eq!(revisions[1]["base_text"], "<p>created revision</p>\n");
     assert_eq!(revisions[1]["conflicted"], false);
-    assert!(revisions[0]["body_text"].as_str().is_some_and(|value| !value.is_empty()));
-    assert!(revisions[1]["body_text"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(
+        revisions[0]["body_text"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        revisions[1]["body_text"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_BODY_REVISIONS
@@ -4380,8 +4361,7 @@ fn sync_converges_concurrent_text_updates_across_two_bound_checkouts() {
         fs::read_to_string(repo_b.join("private/briefs/converge.html")).expect("read merged b");
 
     assert_eq!(merged_a, merged_b);
-    assert!(merged_a.contains("<<<<<<< existing"));
-    assert!(merged_a.contains("<p>repo a edit</p>"));
-    assert!(merged_a.contains("<p>repo b edit</p>"));
-    assert!(merged_a.contains(">>>>>>> incoming"));
+    assert!(!merged_a.contains("<<<<<<< existing"));
+    assert!(merged_a.contains("repo a edit"));
+    assert!(merged_a.contains("repo b edit"));
 }

@@ -7,6 +7,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use projector_domain::{BootstrapSnapshot, DocumentId};
+use serde::{Deserialize, Serialize};
 
 use super::StoreError;
 use super::body_state::{
@@ -17,6 +18,13 @@ use super::history::{
     FileBodyRevision, file_append_body_revision, file_read_body_revisions, insert_body_revision_tx,
     latest_checkpoint_anchor_seq,
 };
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct StoredCanonicalBodyState {
+    document_id: String,
+    state_kind: String,
+    storage_payload: String,
+}
 
 pub(crate) trait SnapshotBodyPersistence {
     fn load_current_state(
@@ -59,9 +67,83 @@ impl<'a> FileBodyPersistence<'a> {
             workspace_id,
         }
     }
+
+    fn current_states_path(&self) -> std::path::PathBuf {
+        crate::storage::workspaces::workspace_dir(self.state_dir, self.workspace_id)
+            .join("canonical_bodies.json")
+    }
+
+    fn read_current_states(&self) -> Result<Vec<StoredCanonicalBodyState>, StoreError> {
+        let path = self.current_states_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = std::fs::read(path)?;
+        serde_json::from_slice(&content).map_err(|err| StoreError::new(err.to_string()))
+    }
+
+    fn write_current_states(&self, states: &[StoredCanonicalBodyState]) -> Result<(), StoreError> {
+        let workspace_root =
+            crate::storage::workspaces::workspace_dir(self.state_dir, self.workspace_id);
+        std::fs::create_dir_all(&workspace_root)?;
+        let encoded =
+            serde_json::to_vec_pretty(states).map_err(|err| StoreError::new(err.to_string()))?;
+        std::fs::write(self.current_states_path(), encoded)?;
+        Ok(())
+    }
 }
 
 impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
+    fn load_current_state(
+        &self,
+        snapshot: &BootstrapSnapshot,
+        document_id: &DocumentId,
+    ) -> CanonicalBodyState {
+        self.read_current_states()
+            .ok()
+            .and_then(|states| {
+                states
+                    .into_iter()
+                    .find(|state| state.document_id == document_id.as_str())
+                    .and_then(|stored| {
+                        CanonicalBodyStateKind::parse(&stored.state_kind)
+                            .ok()
+                            .and_then(|kind| {
+                                FULL_TEXT_BODY_MODEL
+                                    .state_from_storage_record(kind, stored.storage_payload)
+                                    .ok()
+                            })
+                    })
+            })
+            .or_else(|| body_state_from_snapshot(snapshot, document_id))
+            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
+    }
+
+    fn write_current_state(
+        &self,
+        snapshot: &mut BootstrapSnapshot,
+        document_id: &DocumentId,
+        state: &CanonicalBodyState,
+    ) {
+        upsert_body_state(snapshot, document_id, state);
+        let mut states = self.read_current_states().unwrap_or_default();
+        if let Some(existing) = states
+            .iter_mut()
+            .find(|existing| existing.document_id == document_id.as_str())
+        {
+            existing.state_kind = state.kind().as_str().to_owned();
+            existing.storage_payload = state.storage_payload().to_owned();
+        } else {
+            states.push(StoredCanonicalBodyState {
+                document_id: document_id.as_str().to_owned(),
+                state_kind: state.kind().as_str().to_owned(),
+                storage_payload: state.storage_payload().to_owned(),
+            });
+        }
+        self.write_current_states(&states)
+            .expect("file canonical body states should persist");
+    }
+
     fn append_retained_history(
         &self,
         event_cursor: u64,
@@ -110,6 +192,48 @@ impl<'a> SqliteBodyPersistence<'a> {
 }
 
 impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
+    fn load_current_state(
+        &self,
+        snapshot: &BootstrapSnapshot,
+        document_id: &DocumentId,
+    ) -> CanonicalBodyState {
+        self.transaction
+            .query_row(
+                "select state_kind, storage_payload from canonical_bodies where workspace_id = ?1 and document_id = ?2",
+                rusqlite::params![self.workspace_id, document_id.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .ok()
+            .and_then(|(kind, storage_payload)| {
+                CanonicalBodyStateKind::parse(&kind)
+                    .ok()
+                    .and_then(|kind| FULL_TEXT_BODY_MODEL.state_from_storage_record(kind, storage_payload).ok())
+            })
+            .or_else(|| body_state_from_snapshot(snapshot, document_id))
+            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
+    }
+
+    fn write_current_state(
+        &self,
+        snapshot: &mut BootstrapSnapshot,
+        document_id: &DocumentId,
+        state: &CanonicalBodyState,
+    ) {
+        upsert_body_state(snapshot, document_id, state);
+        self.transaction
+            .execute(
+                "insert into canonical_bodies (workspace_id, document_id, state_kind, storage_payload) values (?1, ?2, ?3, ?4)
+                 on conflict(workspace_id, document_id) do update set state_kind = excluded.state_kind, storage_payload = excluded.storage_payload",
+                rusqlite::params![
+                    self.workspace_id,
+                    document_id.as_str(),
+                    state.kind().as_str(),
+                    state.storage_payload(),
+                ],
+            )
+            .expect("sqlite canonical body state should persist");
+    }
+
     fn append_retained_history(
         &self,
         event_cursor: u64,
@@ -210,11 +334,13 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
                 .map_err(StoreError::new);
         }
 
-        let base_checkpoint = if let Some(yjs_state) = row.get::<_, Option<Vec<u8>>>("yjs_state") {
-            YrsTextCheckpoint::from_checkpoint_bytes(yjs_state).map_err(StoreError::new)?
-        } else {
-            YrsTextCheckpoint::from_storage_payload(&body_text).map_err(StoreError::new)?
+        let Some(yjs_state) = row.get::<_, Option<Vec<u8>>>("yjs_state") else {
+            return FULL_TEXT_BODY_MODEL
+                .state_from_storage_record(kind, body_text)
+                .map_err(StoreError::new);
         };
+        let base_checkpoint =
+            YrsTextCheckpoint::from_checkpoint_bytes(yjs_state).map_err(StoreError::new)?;
         let update_rows = self
             .transaction
             .query(

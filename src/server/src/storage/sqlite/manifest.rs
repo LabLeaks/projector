@@ -13,7 +13,7 @@ use projector_domain::{
 use super::super::StoreError;
 use super::super::body_persistence::{SnapshotBodyPersistence, SqliteBodyPersistence};
 use super::super::body_state::{
-    BodyConvergenceEngine, BodyStateModel, FULL_TEXT_BODY_MODEL, ThreeWayMergeBodyEngine,
+    BodyConvergenceEngine, BodyStateModel, FULL_TEXT_BODY_MODEL, YrsConvergenceBodyEngine,
 };
 use super::state::{
     append_event, append_path_revision, display_document_path, load_required_workspace_state,
@@ -122,8 +122,12 @@ pub(super) fn update_document_tx(
 
     let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
     let current_state = body_persistence.load_current_state(&state.snapshot, &document_id);
-    let merge =
-        ThreeWayMergeBodyEngine.apply_update(&request.base_text, &current_state, &request.text);
+    let merge = YrsConvergenceBodyEngine.apply_update(
+        &request.actor_id,
+        &request.base_text,
+        &current_state,
+        &request.text,
+    );
     body_persistence.write_current_state(
         &mut state.snapshot,
         &document_id,

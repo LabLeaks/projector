@@ -6,7 +6,7 @@ Projector materializes synced private context under one or more configured repo-
 v0 materializes only UTF-8 text files and directories under the configured projection mounts.
 
 @spec PROJECTOR.SYNC.TEXT_CONVERGENCE
-UTF-8 text files under the configured projection mounts converge across synced checkouts for the same workspace through deterministic server-side three-way merge, preserving both sides with conflict markers when concurrent edits overlap.
+UTF-8 text files under the configured projection mounts converge across synced checkouts for the same workspace through deterministic server-side CRDT-backed text merge rather than conflict-marker rewrites on concurrent overlap.
 
 @spec PROJECTOR.SYNC.CANONICAL_CRDT_BODY_STATE
 @planned

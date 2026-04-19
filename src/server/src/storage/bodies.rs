@@ -19,7 +19,7 @@ use super::body_persistence::{
 };
 use super::body_state::{
     BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL,
-    RetainedBodyHistoryKind, RetainedBodyHistoryPayload, ThreeWayMergeBodyEngine,
+    RetainedBodyHistoryKind, RetainedBodyHistoryPayload, YrsConvergenceBodyEngine,
 };
 use super::history::{file_read_body_revisions, replay_body_revision_run};
 use super::provenance::{file_append_workspace_event, insert_event_tx};
@@ -72,7 +72,12 @@ pub(crate) fn file_update_document(
 
     let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
     let current_state = body_persistence.load_current_state(&snapshot, &document_id);
-    let merge = merge_text_update(&request.base_text, &current_state, &request.text);
+    let merge = merge_text_update(
+        &request.actor_id,
+        &request.base_text,
+        &current_state,
+        &request.text,
+    );
 
     body_persistence.write_current_state(&mut snapshot, &document_id, merge.canonical_state());
     let Some(entry) = snapshot
@@ -269,7 +274,12 @@ pub(crate) async fn postgres_update_document(
     let current_state = body_persistence
         .load_current_state(&request.document_id)
         .await?;
-    let merge = merge_text_update(&request.base_text, &current_state, &request.text);
+    let merge = merge_text_update(
+        &request.actor_id,
+        &request.base_text,
+        &current_state,
+        &request.text,
+    );
     body_persistence
         .write_current_state(&request.document_id, merge.canonical_state())
         .await?;
@@ -546,9 +556,10 @@ impl MergeTextUpdate {
 }
 
 pub(crate) fn merge_text_update(
+    actor_id: &str,
     base: &str,
     current: &CanonicalBodyState,
     incoming: &str,
 ) -> MergeTextUpdate {
-    MergeTextUpdate(ThreeWayMergeBodyEngine.apply_update(base, current, incoming))
+    MergeTextUpdate(YrsConvergenceBodyEngine.apply_update(actor_id, base, current, incoming))
 }

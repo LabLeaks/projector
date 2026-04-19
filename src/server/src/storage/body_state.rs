@@ -1,8 +1,10 @@
+use std::collections::hash_map::DefaultHasher;
 /**
 @module PROJECTOR.SERVER.BODY_STATE
 Owns the internal canonical-body-state and retained-body-history abstractions so server storage can evolve beyond plain full-text revisions without changing current client-visible behavior yet.
 */
 // @fileimplements PROJECTOR.SERVER.BODY_STATE
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use projector_domain::{BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId};
@@ -23,6 +25,7 @@ pub(crate) trait BodyStateModel {
         kind: CanonicalBodyStateKind,
         storage_payload: impl Into<String>,
     ) -> Result<CanonicalBodyState, String>;
+    #[allow(dead_code)]
     fn history_from_stored_revision(
         &self,
         base_text: impl Into<String>,
@@ -206,6 +209,17 @@ impl YrsTextCheckpoint {
         Ok(doc)
     }
 
+    pub(crate) fn to_doc_with_client_id(&self, client_id: u64) -> Result<Doc, String> {
+        let doc = Doc::with_client_id(client_id);
+        let update = Update::decode_v1(self.merged_update_v1.as_slice())
+            .map_err(|err| format!("decode yrs checkpoint update: {err}"))?;
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update)
+            .map_err(|err| format!("apply yrs checkpoint update: {err}"))?;
+        drop(txn);
+        Ok(doc)
+    }
+
     pub(crate) fn materialized_text(&self) -> Result<String, String> {
         let doc = self.to_doc()?;
         let body = doc.get_or_insert_text("body");
@@ -238,16 +252,37 @@ impl YrsTextCheckpoint {
         Self::from_doc(&doc)
     }
 
-    pub(crate) fn update_to_text_v1(&self, next_text: &str) -> Result<Vec<u8>, String> {
-        let doc = self.to_doc()?;
+    pub(crate) fn update_to_text_v1(
+        &self,
+        next_text: &str,
+        client_id: u64,
+    ) -> Result<Vec<u8>, String> {
+        let doc = self.to_doc_with_client_id(client_id)?;
         let current_text = self.materialized_text()?;
         let body = doc.get_or_insert_text("body");
         let mut txn = doc.transact_mut();
-        if !current_text.is_empty() {
-            body.remove_range(&mut txn, 0, current_text.chars().count() as u32);
-        }
-        if !next_text.is_empty() {
-            body.insert(&mut txn, 0, next_text);
+        let prefix = common_prefix_len(&current_text, next_text);
+        let suffix = common_suffix_len(&current_text[prefix..], &next_text[prefix..]);
+        let current_end = current_text.len().saturating_sub(suffix);
+        let next_end = next_text.len().saturating_sub(suffix);
+        let replace_start_chars = current_text[..prefix].chars().count() as u32;
+        let replace_len_chars = current_text[prefix..current_end].chars().count() as u32;
+        let inserted_len_chars = next_text[prefix..next_end].chars().count() as u32;
+        let inserted_text = &next_text[prefix..next_end];
+        if replace_len_chars > 0 && !inserted_text.is_empty() {
+            body.insert(&mut txn, replace_start_chars, inserted_text);
+            body.remove_range(
+                &mut txn,
+                replace_start_chars + inserted_len_chars,
+                replace_len_chars,
+            );
+        } else {
+            if replace_len_chars > 0 {
+                body.remove_range(&mut txn, replace_start_chars, replace_len_chars);
+            }
+            if !inserted_text.is_empty() {
+                body.insert(&mut txn, replace_start_chars, inserted_text);
+            }
         }
         Ok(txn.encode_update_v1())
     }
@@ -470,7 +505,7 @@ impl BodyStateModel for FullTextBodyModel {
         } else {
             let update_v1 = YrsTextCheckpoint::from_materialized_text(&base_text)
                 .expect("base text should convert into a yrs checkpoint")
-                .update_to_text_v1(&materialized_text)
+                .update_to_text_v1(&materialized_text, PROJECTOR_YRS_SYNTHETIC_TEXT_CLIENT_ID)
                 .expect("next text should produce a yrs incremental update");
             RetainedBodyHistoryPayload::yrs_text_update_v1(base_text, &update_v1, materialized_text)
         }
@@ -589,9 +624,6 @@ impl FullTextBodyModel {
         let Some(previous_state) = previous_state else {
             return Ok(payload.materialized_body_state());
         };
-        if previous_state.materialized_text() != payload.base_text() {
-            return Ok(payload.materialized_body_state());
-        }
 
         let update_v1 = self.yrs_update_v1_from_payload(payload.storage_payload())?;
         let checkpoint = self
@@ -604,6 +636,7 @@ impl FullTextBodyModel {
 pub(crate) trait BodyConvergenceEngine {
     fn apply_update(
         &self,
+        actor_id: &str,
         base_text: &str,
         current_state: &CanonicalBodyState,
         incoming_text: &str,
@@ -645,132 +678,49 @@ impl BodyConvergenceResult {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ThreeWayMergeBodyEngine;
+pub(crate) struct YrsConvergenceBodyEngine;
 
-impl BodyConvergenceEngine for ThreeWayMergeBodyEngine {
+impl BodyConvergenceEngine for YrsConvergenceBodyEngine {
     fn apply_update(
         &self,
+        actor_id: &str,
         base_text: &str,
         current_state: &CanonicalBodyState,
         incoming_text: &str,
     ) -> BodyConvergenceResult {
         let current_text = current_state.materialized_text();
-
-        if current_text == base_text {
-            let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(incoming_text);
-            return BodyConvergenceResult {
-                retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                    base_text,
-                    canonical_state.materialized_text(),
-                    false,
-                ),
-                canonical_state,
-                concurrent: false,
-            };
-        }
-
-        if incoming_text == base_text || incoming_text == current_text {
-            let canonical_state = current_state.clone();
-            return BodyConvergenceResult {
-                retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                    base_text,
-                    canonical_state.materialized_text(),
-                    false,
-                ),
-                canonical_state,
-                concurrent: true,
-            };
-        }
-
-        let current_span = change_span(base_text, current_text);
-        let incoming_span = change_span(base_text, incoming_text);
-
-        if ranges_do_not_overlap(&current_span, &incoming_span) {
-            let merged = apply_non_overlapping_replacements(
-                base_text,
-                current_text,
+        let concurrent = current_text != base_text;
+        let current_checkpoint = FULL_TEXT_BODY_MODEL
+            .yrs_checkpoint_from_state(current_state)
+            .expect("current canonical state should decode into a yrs checkpoint");
+        let base_checkpoint = if concurrent {
+            YrsTextCheckpoint::from_materialized_text(base_text)
+                .expect("base text should convert into a yrs checkpoint")
+        } else {
+            current_checkpoint.clone()
+        };
+        let incoming_update = base_checkpoint
+            .update_to_text_v1(
                 incoming_text,
-                &current_span,
-                &incoming_span,
-            );
-            let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(merged);
-            return BodyConvergenceResult {
-                retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                    base_text,
-                    canonical_state.materialized_text(),
-                    false,
-                ),
-                canonical_state,
-                concurrent: true,
-            };
-        }
-
-        let conflicted = format!(
-            "<<<<<<< existing\n{}=======\n{}>>>>>>> incoming\n",
-            ensure_trailing_newline(current_text),
-            ensure_trailing_newline(incoming_text),
-        );
-        let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(conflicted);
+                yrs_operation_client_id(actor_id, base_text, incoming_text),
+            )
+            .expect("incoming text should produce a yrs incremental update");
+        let canonical_checkpoint = current_checkpoint
+            .with_update_v1(&incoming_update)
+            .expect("yrs update should merge into current canonical state");
+        let canonical_state = FULL_TEXT_BODY_MODEL
+            .state_from_yrs_checkpoint(canonical_checkpoint)
+            .expect("merged yrs checkpoint should materialize as canonical text state");
         BodyConvergenceResult {
-            retained_history: FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+            retained_history: RetainedBodyHistoryPayload::yrs_text_update_v1(
                 base_text,
+                &incoming_update,
                 canonical_state.materialized_text(),
-                true,
             ),
             canonical_state,
-            concurrent: true,
+            concurrent,
         }
     }
-}
-
-#[derive(Clone, Copy)]
-struct ChangeSpan {
-    start: usize,
-    end: usize,
-}
-
-fn change_span(base: &str, variant: &str) -> ChangeSpan {
-    let prefix = common_prefix_len(base, variant);
-    let suffix = common_suffix_len(&base[prefix..], &variant[prefix..]);
-    ChangeSpan {
-        start: prefix,
-        end: base.len().saturating_sub(suffix),
-    }
-}
-
-fn ranges_do_not_overlap(left: &ChangeSpan, right: &ChangeSpan) -> bool {
-    left.end <= right.start || right.end <= left.start
-}
-
-fn apply_non_overlapping_replacements(
-    base: &str,
-    current: &str,
-    incoming: &str,
-    current_span: &ChangeSpan,
-    incoming_span: &ChangeSpan,
-) -> String {
-    let (first_span, first_variant, second_span, second_variant) =
-        if current_span.start <= incoming_span.start {
-            (current_span, current, incoming_span, incoming)
-        } else {
-            (incoming_span, incoming, current_span, current)
-        };
-
-    let mut merged = String::new();
-    merged.push_str(&base[..first_span.start]);
-    merged.push_str(&first_variant[first_span.start..variant_end(first_variant, base, first_span)]);
-    merged.push_str(&base[first_span.end..second_span.start]);
-    merged.push_str(
-        &second_variant[second_span.start..variant_end(second_variant, base, second_span)],
-    );
-    merged.push_str(&base[second_span.end..]);
-    merged
-}
-
-fn variant_end(variant: &str, base: &str, span: &ChangeSpan) -> usize {
-    let prefix = span.start;
-    let suffix = common_suffix_len(&base[prefix..], &variant[prefix..]);
-    variant.len().saturating_sub(suffix)
 }
 
 fn common_prefix_len(left: &str, right: &str) -> usize {
@@ -798,11 +748,16 @@ fn common_suffix_len(left: &str, right: &str) -> usize {
     total.min(left.len()).min(right.len())
 }
 
-fn ensure_trailing_newline(text: &str) -> String {
-    if text.ends_with('\n') {
-        text.to_owned()
+fn yrs_operation_client_id(actor_id: &str, base_text: &str, incoming_text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    actor_id.hash(&mut hasher);
+    base_text.hash(&mut hasher);
+    incoming_text.hash(&mut hasher);
+    let hashed = hasher.finish();
+    if hashed == PROJECTOR_YRS_SYNTHETIC_TEXT_CLIENT_ID {
+        hashed.wrapping_add(1)
     } else {
-        format!("{text}\n")
+        hashed
     }
 }
 
@@ -836,19 +791,27 @@ fn decode_hex(raw: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, CanonicalBodyStateKind,
-        FullTextBodyModel, RetainedBodyHistoryKind, RetainedBodyHistoryPayload,
-        ThreeWayMergeBodyEngine, YrsTextCheckpoint,
+        BodyConvergenceEngine, BodyStateModel, CanonicalBodyStateKind, FullTextBodyModel,
+        RetainedBodyHistoryKind, RetainedBodyHistoryPayload, YrsConvergenceBodyEngine,
+        YrsTextCheckpoint,
     };
     use yrs::{GetString, Text, Transact};
 
     #[test]
-    fn three_way_engine_merges_non_overlapping_edits() {
-        let engine = ThreeWayMergeBodyEngine;
-        let current_state = CanonicalBodyState::full_text_merge_v1("alpha\nbeta changed\ngamma\n");
+    fn yrs_engine_merges_non_overlapping_edits() {
+        let engine = YrsConvergenceBodyEngine;
+        let base_text = "alpha\nbeta\ngamma\n";
+        let base_state = FullTextBodyModel.state_from_materialized_text(base_text);
+        let current = engine.apply_update(
+            "actor-a",
+            base_text,
+            &base_state,
+            "alpha\nbeta changed\ngamma\n",
+        );
         let result = engine.apply_update(
-            "alpha\nbeta\ngamma\n",
-            &current_state,
+            "actor-b",
+            base_text,
+            current.canonical_state(),
             "alpha\nbeta\nGAMMA changed\n",
         );
 
@@ -860,22 +823,48 @@ mod tests {
     }
 
     #[test]
-    fn three_way_engine_emits_conflict_markers_for_overlapping_edits() {
-        let engine = ThreeWayMergeBodyEngine;
-        let current_state = CanonicalBodyState::full_text_merge_v1("alpha\nBETA\ngamma\n");
+    fn yrs_engine_applies_sequential_updates_without_losing_text() {
+        let engine = YrsConvergenceBodyEngine;
+        let base_text = "<p>original revision</p>\n";
+        let base_state = FullTextBodyModel.state_from_materialized_text(base_text);
+        let current = engine.apply_update(
+            "projector",
+            base_text,
+            &base_state,
+            "<p>updated revision one</p>\n",
+        );
         let result = engine.apply_update(
-            "alpha\nbeta\ngamma\n",
-            &current_state,
+            "projector",
+            "<p>updated revision one</p>\n",
+            current.canonical_state(),
+            "<p>updated revision two</p>\n",
+        );
+
+        assert_eq!(
+            result.canonical_state().materialized_text(),
+            "<p>updated revision two</p>\n"
+        );
+        assert!(!result.retained_history().conflicted());
+    }
+
+    #[test]
+    fn yrs_engine_converges_overlapping_edits_without_conflict_markers() {
+        let engine = YrsConvergenceBodyEngine;
+        let base_text = "alpha\nbeta\ngamma\n";
+        let base_state = FullTextBodyModel.state_from_materialized_text(base_text);
+        let current =
+            engine.apply_update("actor-a", base_text, &base_state, "alpha\nBETA\ngamma\n");
+        let result = engine.apply_update(
+            "actor-b",
+            base_text,
+            current.canonical_state(),
             "alpha\nBETTER\ngamma\n",
         );
 
-        assert!(result.retained_history().conflicted());
-        assert!(
-            result
-                .canonical_state()
-                .materialized_text()
-                .contains("<<<<<<< existing")
-        );
+        assert!(!result.retained_history().conflicted());
+        let merged = result.canonical_state().materialized_text();
+        assert!(!merged.contains("<<<<<<<"));
+        assert!(merged.contains("BETA") || merged.contains("BETTER"));
     }
 
     #[test]

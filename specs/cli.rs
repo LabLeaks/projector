@@ -30,7 +30,7 @@ When materialized text files contain projector conflict markers from a concurren
 `projector log` renders the local projector event log when local bootstrap events exist.
 
 @spec PROJECTOR.CLI.LOG.SUMMARY
-`projector log` shows recent durable workspace events with path and summary, including conflicting merge summaries from server provenance.
+`projector log` shows recent durable workspace events with path and summary, including concurrent text-merge summaries from server provenance.
 
 @spec PROJECTOR.CLI.HISTORY.RENDERS_DOCUMENT_REVISIONS
 `projector history <repo-relative-path>` resolves the live bound document at that path and renders recent body and path revisions from the server.

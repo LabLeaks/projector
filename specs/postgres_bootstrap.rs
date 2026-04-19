@@ -1185,7 +1185,6 @@ fn postgres_server_restores_workspace_at_cursor() {
     );
 }
 
-// @verifies PROJECTOR.SYNC.TEXT_CONVERGENCE
 #[test]
 #[ignore = "requires local docker"]
 fn sync_converges_concurrent_text_updates_through_postgres_server() {

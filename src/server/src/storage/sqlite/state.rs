@@ -36,6 +36,14 @@ create table if not exists body_revisions (
   primary key (workspace_id, seq)
 );
 
+create table if not exists canonical_bodies (
+  workspace_id text not null,
+  document_id text not null,
+  state_kind text not null,
+  storage_payload text not null,
+  primary key (workspace_id, document_id)
+);
+
 create table if not exists path_revisions (
   workspace_id text not null,
   seq integer not null,

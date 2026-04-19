@@ -106,7 +106,15 @@ fn tag_points_at_current_revision(tag: &str) -> bool {
 
 fn tag_exists(tag: &str) -> bool {
     let output = Command::new("jj")
-        .args(["--ignore-working-copy", "log", "-r", tag, "--no-graph", "-T", "commit_id"])
+        .args([
+            "--ignore-working-copy",
+            "log",
+            "-r",
+            tag,
+            "--no-graph",
+            "-T",
+            "commit_id",
+        ])
         .current_dir(repo_root())
         .output()
         .expect("jj tag lookup should run");
@@ -114,11 +122,12 @@ fn tag_exists(tag: &str) -> bool {
 }
 
 fn effective_release_args(version: &str, args: &[&str]) -> Vec<String> {
-    let mut effective = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    let mut effective = args
+        .iter()
+        .map(|arg| (*arg).to_string())
+        .collect::<Vec<_>>();
     let tag = format!("v{version}");
-    if tag_exists(&tag)
-        && !effective.iter().any(|arg| arg == "--allow-existing-tag")
-    {
+    if tag_exists(&tag) && !effective.iter().any(|arg| arg == "--allow-existing-tag") {
         effective.push("--allow-existing-tag".to_string());
     }
     effective
@@ -481,7 +490,9 @@ fn release_tag_script_skip_checklist_runs_publication_steps() {
         .iter()
         .map(|entry| entry["label"].as_str().expect("label should be string"))
         .collect();
-    let expected = if tag_exists(&format!("v{version}")) && tag_points_at_current_revision(&format!("v{version}")) {
+    let expected = if tag_exists(&format!("v{version}"))
+        && tag_points_at_current_revision(&format!("v{version}"))
+    {
         vec![
             "bookmark_main",
             "push_main",
