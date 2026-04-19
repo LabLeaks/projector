@@ -680,6 +680,7 @@ fn redact_body_history(
     actor_id: &str,
     document_id: &str,
     exact_text: &str,
+    expected_match_seqs: Option<&[u64]>,
 ) {
     reqwest::blocking::Client::new()
         .post(format!("http://{addr}/history/body/redact"))
@@ -688,11 +689,38 @@ fn redact_body_history(
             actor_id: actor_id.to_owned(),
             document_id: document_id.to_owned(),
             exact_text: exact_text.to_owned(),
+            expected_match_seqs: expected_match_seqs.map(|seqs| seqs.to_vec()),
         })
         .send()
         .expect("send body history redact request")
         .error_for_status()
         .expect("body history redact response status");
+}
+
+fn redact_body_history_failure(
+    addr: &str,
+    workspace_id: &str,
+    actor_id: &str,
+    document_id: &str,
+    exact_text: &str,
+    expected_match_seqs: Option<&[u64]>,
+) -> String {
+    let response = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/history/body/redact"))
+        .json(&RedactDocumentBodyHistoryRequest {
+            workspace_id: workspace_id.to_owned(),
+            actor_id: actor_id.to_owned(),
+            document_id: document_id.to_owned(),
+            exact_text: exact_text.to_owned(),
+            expected_match_seqs: expected_match_seqs.map(|seqs| seqs.to_vec()),
+        })
+        .send()
+        .expect("send body history redact failure request");
+    assert!(
+        !response.status().is_success(),
+        "body history redact unexpectedly succeeded"
+    );
+    response.text().expect("decode redact failure body")
 }
 
 fn list_events(addr: &str, workspace_id: &str, limit: usize) -> Vec<ProvenanceEvent> {
@@ -1002,6 +1030,7 @@ impl Transport for RejectCreateTransport {
         _binding: &dyn SyncContext,
         _document_id: &DocumentId,
         _exact_text: &str,
+        _expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -1186,6 +1215,7 @@ impl Transport for RetryAfterRebootstrapTransport {
         _binding: &dyn SyncContext,
         _document_id: &DocumentId,
         _exact_text: &str,
+        _expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -1368,6 +1398,7 @@ impl Transport for RetryImmediatelyTransport {
         _binding: &dyn SyncContext,
         _document_id: &DocumentId,
         _exact_text: &str,
+        _expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -3758,6 +3789,7 @@ fn server_can_redact_exact_text_in_retained_document_body_history() {
         binding.actor_id.as_str(),
         &document_id,
         secret,
+        None,
     );
 
     let revisions_after = list_body_revisions(&addr, &workspace_id, &document_id, 10);
@@ -3839,6 +3871,70 @@ fn server_lists_retained_redaction_matches_with_preview_lines() {
                 .iter()
                 .any(|line| line.contains("[REDACTED]"))
     }));
+}
+
+// @verifies PROJECTOR.SERVER.HISTORY.REJECTS_STALE_REDACTION_PREVIEW
+#[test]
+fn server_redaction_rejects_stale_previewed_match_set() {
+    let repo = temp_repo("body-history-redact-stale-preview");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    let workspace_id = first_sync
+        .lines()
+        .find_map(|line| line.strip_prefix("workspace_id: "))
+        .expect("workspace id")
+        .to_owned();
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    let secret = "SECRET-123";
+    fs::write(
+        repo.join("private/briefs/history-redact-stale-preview.html"),
+        format!("<p>created {secret} revision</p>\n"),
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap");
+    let document_id = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| {
+            !entry.deleted
+                && entry.mount_relative_path == Path::new("private")
+                && entry.relative_path == Path::new("briefs/history-redact-stale-preview.html")
+        })
+        .expect("created entry")
+        .document_id
+        .as_str()
+        .to_owned();
+
+    let matches = preview_redact_body_history(&addr, &workspace_id, &document_id, secret, 10);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].seq, 1);
+
+    fs::write(
+        repo.join("private/briefs/history-redact-stale-preview.html"),
+        format!("<p>updated {secret} revision</p>\n"),
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let failure = redact_body_history_failure(
+        &addr,
+        &workspace_id,
+        binding.actor_id.as_str(),
+        &document_id,
+        secret,
+        Some(&[matches[0].seq]),
+    );
+    assert!(failure.contains("retained redaction preview is stale"));
+    assert!(failure.contains("expected seqs [1], found [1, 2]"));
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.PURGES_DOCUMENT_RETAINED_BODY_HISTORY

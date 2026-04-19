@@ -109,6 +109,7 @@ pub trait Transport {
         binding: &dyn SyncContext,
         document_id: &DocumentId,
         exact_text: &str,
+        expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error>;
     fn purge_document_body_history(
         &mut self,

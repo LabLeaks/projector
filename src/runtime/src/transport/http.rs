@@ -395,6 +395,7 @@ impl Transport for HttpTransport {
         binding: &dyn SyncContext,
         document_id: &DocumentId,
         exact_text: &str,
+        expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         let response = self
             .client
@@ -404,6 +405,7 @@ impl Transport for HttpTransport {
                 actor_id: binding.actor_id().as_str().to_owned(),
                 document_id: document_id.as_str().to_owned(),
                 exact_text: exact_text.to_owned(),
+                expected_match_seqs: expected_match_seqs.map(|seqs| seqs.to_vec()),
             })
             .send()
             .map_err(io::Error::other)?;

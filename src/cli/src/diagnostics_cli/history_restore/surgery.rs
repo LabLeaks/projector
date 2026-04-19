@@ -37,10 +37,15 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             RedactBrowserExit::Apply { selected_seq } => {
                 println!("matching_revisions: {matching_revision_count}");
                 println!("selected_seq: {selected_seq}");
+                let expected_match_seqs = matching_revisions
+                    .iter()
+                    .map(|revision| revision.seq)
+                    .collect::<Vec<_>>();
                 prepared.transport.redact_document_body_history(
                     &prepared.binding,
                     &prepared.document_id,
                     &redact_args.exact_text,
+                    Some(&expected_match_seqs),
                 )?;
                 println!("redaction: applied");
             }
@@ -76,6 +81,7 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         &prepared.binding,
         &prepared.document_id,
         &redact_args.exact_text,
+        None,
     )?;
     println!("redaction: applied");
     Ok(())

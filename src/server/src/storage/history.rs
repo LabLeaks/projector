@@ -220,6 +220,22 @@ pub(crate) fn retained_redaction_matches(
     Ok(matches)
 }
 
+pub(crate) fn ensure_expected_redaction_match_set(
+    request: &RedactDocumentBodyHistoryRequest,
+    matched_seqs: &[u64],
+) -> Result<(), StoreError> {
+    let Some(expected_match_seqs) = request.expected_match_seqs.as_ref() else {
+        return Ok(());
+    };
+    if expected_match_seqs == matched_seqs {
+        return Ok(());
+    }
+    Err(StoreError::new(format!(
+        "document {} retained redaction preview is stale: expected seqs {:?}, found {:?}",
+        request.document_id, expected_match_seqs, matched_seqs
+    )))
+}
+
 pub(crate) fn replay_body_revision_run(
     revisions: impl IntoIterator<Item = FileBodyRevision>,
 ) -> HashMap<String, CanonicalBodyState> {
@@ -414,22 +430,23 @@ pub(crate) fn file_redact_document_body_history(
     request: &RedactDocumentBodyHistoryRequest,
 ) -> Result<(), StoreError> {
     let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
-    let mut matched = 0usize;
+    let mut matched_seqs = Vec::new();
     for revision in revisions.iter_mut() {
         if revision.document_id != request.document_id {
             continue;
         }
         if let Some(redacted) = revision.redacted(&request.exact_text)? {
+            matched_seqs.push(redacted.seq);
             *revision = redacted;
-            matched += 1;
         }
     }
-    if matched == 0 {
+    if matched_seqs.is_empty() {
         return Err(StoreError::new(format!(
             "document {} has no retained body history matching {:?} in workspace {}",
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
+    ensure_expected_redaction_match_set(request, &matched_seqs)?;
     let encoded =
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
     fs::write(
@@ -931,11 +948,12 @@ pub(crate) async fn postgres_redact_document_body_history(
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
 
-    let mut matched = 0usize;
+    let mut matched_seqs = Vec::new();
     for revision in revisions {
         let Some(redacted) = revision.redacted(&request.exact_text)? else {
             continue;
         };
+        matched_seqs.push(redacted.seq);
         transaction
             .execute(
                 "update document_body_revisions \
@@ -951,14 +969,14 @@ pub(crate) async fn postgres_redact_document_body_history(
                 ],
             )
             .await?;
-        matched += 1;
     }
-    if matched == 0 {
+    if matched_seqs.is_empty() {
         return Err(StoreError::new(format!(
             "document {} has no retained body history matching {:?} in workspace {}",
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
+    ensure_expected_redaction_match_set(request, &matched_seqs)?;
     let live_path = transaction
         .query_opt(
             "select mount_path, relative_path from document_paths \

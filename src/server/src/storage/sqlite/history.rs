@@ -224,7 +224,7 @@ pub(super) fn redact_document_body_history(
     request: &RedactDocumentBodyHistoryRequest,
 ) -> Result<(), StoreError> {
     let revisions = read_body_revisions(connection, &request.workspace_id)?;
-    let mut matched = 0usize;
+    let mut matched_seqs = Vec::new();
     for revision in revisions {
         if revision.document_id != request.document_id {
             continue;
@@ -232,6 +232,7 @@ pub(super) fn redact_document_body_history(
         let Some(redacted) = revision.redacted(&request.exact_text)? else {
             continue;
         };
+        matched_seqs.push(redacted.seq);
         connection.execute(
             "update body_revisions set revision_json = ?3 where workspace_id = ?1 and seq = ?2",
             params![
@@ -240,14 +241,14 @@ pub(super) fn redact_document_body_history(
                 encode_json(&redacted)?
             ],
         )?;
-        matched += 1;
     }
-    if matched == 0 {
+    if matched_seqs.is_empty() {
         return Err(StoreError::new(format!(
             "document {} has no retained body history matching {:?} in workspace {}",
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
+    super::super::history::ensure_expected_redaction_match_set(request, &matched_seqs)?;
 
     let live_path = connection
         .query_row(

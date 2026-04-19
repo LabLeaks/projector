@@ -195,6 +195,7 @@ pub struct RedactDocumentBodyHistoryRequest {
     pub actor_id: String,
     pub document_id: String,
     pub exact_text: String,
+    pub expected_match_seqs: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
