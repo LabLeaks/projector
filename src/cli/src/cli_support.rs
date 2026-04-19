@@ -41,6 +41,7 @@ pub(crate) fn format_kind(kind: &ProvenanceEventKind) -> &'static str {
         ProvenanceEventKind::DocumentUpdated => "document_updated",
         ProvenanceEventKind::DocumentDeleted => "document_deleted",
         ProvenanceEventKind::DocumentMoved => "document_moved",
+        ProvenanceEventKind::DocumentHistoryPurged => "document_history_purged",
         ProvenanceEventKind::SyncBootstrapped => "sync_bootstrapped",
         ProvenanceEventKind::SyncReusedBinding => "sync_reused_binding",
         ProvenanceEventKind::SyncIssue => "sync_issue",

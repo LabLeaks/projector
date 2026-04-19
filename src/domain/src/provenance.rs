@@ -16,6 +16,7 @@ pub enum ProvenanceEventKind {
     DocumentMoved,
     DocumentUpdated,
     DocumentDeleted,
+    DocumentHistoryPurged,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

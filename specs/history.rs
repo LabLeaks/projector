@@ -86,12 +86,10 @@ Server history storage can retain checkpointed document body snapshots together 
 `POST /history/body/redact` can rewrite one document's retained checkpoints and update history to redact selected sensitive content everywhere that exact content appears while preserving readable retained history.
 
 @spec PROJECTOR.SERVER.HISTORY.PURGES_DOCUMENT_RETAINED_BODY_HISTORY
-@planned
-`POST /history/body/purge` can purge one document's retained historical body content by path without deleting the surrounding non-secret audit record that history surgery happened.
+`POST /history/body/purge` can purge one document's retained historical body content for a document id without deleting the surrounding non-secret audit record that history surgery happened.
 
 @spec PROJECTOR.SERVER.HISTORY.RECORDS_DESTRUCTIVE_HISTORY_SURGERY
-@planned
-Server history storage durably records destructive document-history surgery without retaining the removed sensitive content in the audit record.
+`POST /history/body/purge` records destructive document-history surgery durably without retaining the removed historical body content in the audit record.
 
 @spec PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
 @planned

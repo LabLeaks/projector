@@ -619,6 +619,9 @@ impl BodyStateModel for FullTextBodyModel {
             }
             RetainedBodyHistoryKind::YrsTextCheckpointV1 => {
                 let storage_payload = materialized_text.into();
+                if storage_payload.is_empty() {
+                    return RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, "");
+                }
                 RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
                     base_text,
                     YrsTextCheckpoint::from_storage_payload(&storage_payload)
@@ -629,6 +632,9 @@ impl BodyStateModel for FullTextBodyModel {
             RetainedBodyHistoryKind::YrsTextUpdateV1 => {
                 let base_text = base_text.into();
                 let storage_payload = materialized_text.into();
+                if storage_payload.is_empty() {
+                    return RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, "");
+                }
                 let stored: StoredYrsTextUpdateV1 = serde_json::from_str(&storage_payload)
                     .expect("stored yrs update payload should parse");
                 let update_v1 = decode_hex(&stored.update_v1_hex)
@@ -1008,6 +1014,28 @@ mod tests {
 
         assert_eq!(replayed.kind(), CanonicalBodyStateKind::YrsTextCheckpointV1);
         assert_eq!(replayed.materialized_text(), "after\n");
+    }
+
+    #[test]
+    fn purged_yrs_history_payloads_decode_as_empty_retained_history() {
+        let model = FullTextBodyModel;
+        let checkpoint = model.history_from_storage_record(
+            RetainedBodyHistoryKind::YrsTextCheckpointV1,
+            "",
+            "",
+            false,
+        );
+        assert_eq!(checkpoint.base_text(), "");
+        assert_eq!(checkpoint.materialized_text(), "");
+
+        let update = model.history_from_storage_record(
+            RetainedBodyHistoryKind::YrsTextUpdateV1,
+            "",
+            "",
+            false,
+        );
+        assert_eq!(update.base_text(), "");
+        assert_eq!(update.materialized_text(), "");
     }
 
     #[test]

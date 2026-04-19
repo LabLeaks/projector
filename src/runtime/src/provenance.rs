@@ -100,6 +100,7 @@ fn format_kind(kind: &ProvenanceEventKind) -> &'static str {
         ProvenanceEventKind::DocumentMoved => "document_moved",
         ProvenanceEventKind::DocumentUpdated => "document_updated",
         ProvenanceEventKind::DocumentDeleted => "document_deleted",
+        ProvenanceEventKind::DocumentHistoryPurged => "document_history_purged",
     }
 }
 
@@ -113,6 +114,7 @@ fn parse_kind(value: &str) -> Option<ProvenanceEventKind> {
         "document_moved" => Some(ProvenanceEventKind::DocumentMoved),
         "document_updated" => Some(ProvenanceEventKind::DocumentUpdated),
         "document_deleted" => Some(ProvenanceEventKind::DocumentDeleted),
+        "document_history_purged" => Some(ProvenanceEventKind::DocumentHistoryPurged),
         _ => None,
     }
 }

@@ -27,7 +27,8 @@ use super::provenance::{
 use super::workspaces::workspace_dir;
 use projector_domain::{
     BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathRevision,
-    ManifestEntry, ManifestState, ProvenanceEvent, ProvenanceEventKind, RestoreWorkspaceRequest,
+    ManifestEntry, ManifestState, ProvenanceEvent, ProvenanceEventKind,
+    PurgeDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -228,6 +229,59 @@ pub(crate) fn file_list_body_revisions(
         revisions = revisions.split_off(revisions.len() - limit);
     }
     Ok(revisions)
+}
+
+pub(crate) fn file_purge_document_body_history(
+    state_dir: &Path,
+    request: &PurgeDocumentBodyHistoryRequest,
+) -> Result<(), StoreError> {
+    let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
+    let mut matched = false;
+    for revision in revisions.iter_mut() {
+        if revision.document_id == request.document_id {
+            revision.base_text.clear();
+            revision.body_text.clear();
+            matched = true;
+        }
+    }
+    if !matched {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+    let encoded =
+        serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
+    fs::write(file_body_revisions_path(state_dir, &request.workspace_id), encoded)?;
+
+    let current_snapshot = file_read_workspace_snapshot(state_dir, &request.workspace_id)?;
+    let live_entry = current_snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| !entry.deleted && entry.document_id.as_str() == request.document_id);
+    let mount_relative_path = live_entry.map(|entry| entry.mount_relative_path.display().to_string());
+    let relative_path = live_entry.map(|entry| entry.relative_path.display().to_string());
+    let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
+    file_append_workspace_event(
+        state_dir,
+        &request.workspace_id,
+        ProvenanceEvent {
+            cursor: event_cursor,
+            timestamp_ms: current_time_ms(),
+            actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
+            document_id: Some(DocumentId::new(request.document_id.clone())),
+            mount_relative_path: mount_relative_path.clone(),
+            relative_path: relative_path.clone(),
+            summary: purge_history_summary(
+                request.document_id.as_str(),
+                mount_relative_path.as_deref(),
+                relative_path.as_deref(),
+            ),
+            kind: ProvenanceEventKind::DocumentHistoryPurged,
+        },
+    )?;
+    Ok(())
 }
 
 pub(crate) fn file_read_path_history(
@@ -548,6 +602,75 @@ pub(crate) async fn postgres_list_body_revisions(
         .collect::<Result<Vec<_>, StoreError>>()?;
     revisions.reverse();
     Ok(revisions)
+}
+
+pub(crate) async fn postgres_purge_document_body_history(
+    transaction: &tokio_postgres::Transaction<'_>,
+    request: &PurgeDocumentBodyHistoryRequest,
+) -> Result<(), StoreError> {
+    let matched = transaction
+        .execute(
+            "update document_body_revisions \
+             set base_text = '', body_text = '' \
+             where workspace_id = $1 and document_id = $2",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    if matched == 0 {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+    transaction
+        .execute(
+            "delete from document_body_updates where workspace_id = $1 and document_id = $2",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let live_path = transaction
+        .query_opt(
+            "select mount_path, relative_path from document_paths \
+             where workspace_id = $1 and document_id = $2 and deleted = false",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let mount_relative_path = live_path
+        .as_ref()
+        .map(|row| row.get::<_, String>("mount_path"));
+    let relative_path = live_path
+        .as_ref()
+        .map(|row| row.get::<_, String>("relative_path"));
+    insert_event_tx(
+        transaction,
+        &request.workspace_id,
+        &request.actor_id,
+        Some(&request.document_id),
+        mount_relative_path.as_deref(),
+        relative_path.as_deref(),
+        ProvenanceEventKind::DocumentHistoryPurged,
+        &purge_history_summary(
+            request.document_id.as_str(),
+            mount_relative_path.as_deref(),
+            relative_path.as_deref(),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+fn purge_history_summary(
+    document_id: &str,
+    mount_relative_path: Option<&str>,
+    relative_path: Option<&str>,
+) -> String {
+    match (mount_relative_path, relative_path) {
+        (Some(mount), Some(relative)) if !relative.is_empty() => {
+            format!("purged retained body history for {mount}/{relative}")
+        }
+        (Some(mount), _) => format!("purged retained body history for {mount}"),
+        _ => format!("purged retained body history for document {document_id}"),
+    }
 }
 
 pub(crate) async fn postgres_list_path_revisions(

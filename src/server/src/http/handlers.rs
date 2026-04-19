@@ -16,7 +16,8 @@ use projector_domain::{
     ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
     ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
     ListSyncEntriesResponse, MoveDocumentRequest, ReconstructWorkspaceRequest,
-    ReconstructWorkspaceResponse, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
+    PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceResponse,
+    ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, UpdateDocumentRequest,
 };
 
@@ -39,6 +40,7 @@ pub(super) fn app(store: Arc<dyn WorkspaceStore>) -> Router {
         .route("/events/list", post(list_events))
         .route("/history/body/list", post(list_body_revisions))
         .route("/history/body/restore", post(restore_body_revision))
+        .route("/history/body/purge", post(purge_body_history))
         .route("/history/path/list", post(list_path_revisions))
         .route(
             "/history/workspace/reconstruct",
@@ -224,6 +226,19 @@ async fn restore_body_revision(
     state
         .store
         .restore_document_body_revision(&request)
+        .await
+        .map_err(store_error_response)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn purge_body_history(
+    State(state): State<AppState>,
+    Json(request): Json<PurgeDocumentBodyHistoryRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    state
+        .store
+        .purge_document_body_history(&request)
         .await
         .map_err(store_error_response)?;
 

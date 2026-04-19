@@ -3,12 +3,18 @@
 Owns SQLite event and revision reads for list, discovery, and historical path resolution over append-only server history rows.
 */
 // @fileimplements PROJECTOR.SERVER.SQLITE_HISTORY
-use projector_domain::{DocumentBodyRevision, DocumentId, DocumentPathRevision, ProvenanceEvent};
+use projector_domain::{
+    DocumentBodyRevision, DocumentId, DocumentPathRevision, ProvenanceEvent,
+    ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::super::StoreError;
 pub(super) use super::super::history::{FileBodyRevision, FilePathRevision};
-use super::state::{decode_json, effective_workspace_cursor};
+use super::state::{
+    append_event, decode_json, effective_workspace_cursor, load_required_workspace_state,
+    make_event,
+};
 
 pub(super) fn read_events_since(
     connection: &Connection,
@@ -145,4 +151,64 @@ pub(super) fn resolve_document_by_historical_path(
                 "no document path history found at {mount_path}/{relative_path}"
             ))
         })
+}
+
+pub(super) fn purge_document_body_history(
+    connection: &rusqlite::Transaction<'_>,
+    request: &PurgeDocumentBodyHistoryRequest,
+) -> Result<(), StoreError> {
+    let matched = connection.execute(
+        "update body_revisions \
+         set revision_json = json_set(revision_json, '$.base_text', '', '$.body_text', '') \
+         where workspace_id = ?1 and json_extract(revision_json, '$.document_id') = ?2",
+        params![request.workspace_id, request.document_id],
+    )?;
+    if matched == 0 {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+
+    let live_path = connection
+        .query_row(
+            "select mount_path, relative_path from document_paths \
+             where workspace_id = ?1 and document_id = ?2 and deleted = false",
+            params![request.workspace_id, request.document_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let mut state = load_required_workspace_state(connection, &request.workspace_id)?;
+    let mount_relative_path = live_path.as_ref().map(|(mount, _)| mount.clone());
+    let relative_path = live_path.as_ref().map(|(_, relative)| relative.clone());
+    let event = make_event(
+        &mut state,
+        &request.actor_id,
+        Some(DocumentId::new(request.document_id.clone())),
+        mount_relative_path.clone(),
+        relative_path.clone(),
+        purge_history_summary(
+            request.document_id.as_str(),
+            mount_relative_path.as_deref(),
+            relative_path.as_deref(),
+        ),
+        ProvenanceEventKind::DocumentHistoryPurged,
+    );
+    super::state::save_workspace_state(connection, &state)?;
+    append_event(connection, &request.workspace_id, &event)?;
+    Ok(())
+}
+
+fn purge_history_summary(
+    document_id: &str,
+    mount_relative_path: Option<&str>,
+    relative_path: Option<&str>,
+) -> String {
+    match (mount_relative_path, relative_path) {
+        (Some(mount), Some(relative)) if !relative.is_empty() => {
+            format!("purged retained body history for {mount}/{relative}")
+        }
+        (Some(mount), _) => format!("purged retained body history for {mount}"),
+        _ => format!("purged retained body history for document {document_id}"),
+    }
 }

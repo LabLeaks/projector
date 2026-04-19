@@ -18,7 +18,7 @@ pub use wire::{
     DocumentBody, DocumentBodyRevision, DocumentPathRevision, ListBodyRevisionsRequest,
     ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
     ListPathRevisionsResponse, ListSyncEntriesRequest, ListSyncEntriesResponse,
-    MoveDocumentRequest, ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
+    MoveDocumentRequest, PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
     ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntrySummary,
     UpdateDocumentRequest,

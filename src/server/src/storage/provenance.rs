@@ -180,6 +180,7 @@ pub(crate) fn parse_event_kind(raw: &str) -> Result<ProvenanceEventKind, StoreEr
         "document_moved" => Ok(ProvenanceEventKind::DocumentMoved),
         "document_updated" => Ok(ProvenanceEventKind::DocumentUpdated),
         "document_deleted" => Ok(ProvenanceEventKind::DocumentDeleted),
+        "document_history_purged" => Ok(ProvenanceEventKind::DocumentHistoryPurged),
         "sync_bootstrapped" => Ok(ProvenanceEventKind::SyncBootstrapped),
         "sync_reused_binding" => Ok(ProvenanceEventKind::SyncReusedBinding),
         "sync_recovery" => Ok(ProvenanceEventKind::SyncRecovery),
@@ -261,6 +262,7 @@ fn event_kind_db_value(kind: &ProvenanceEventKind) -> &'static str {
         ProvenanceEventKind::DocumentMoved => "document_moved",
         ProvenanceEventKind::DocumentUpdated => "document_updated",
         ProvenanceEventKind::DocumentDeleted => "document_deleted",
+        ProvenanceEventKind::DocumentHistoryPurged => "document_history_purged",
         ProvenanceEventKind::SyncBootstrapped => "sync_bootstrapped",
         ProvenanceEventKind::SyncReusedBinding => "sync_reused_binding",
         ProvenanceEventKind::SyncRecovery => "sync_recovery",
@@ -298,6 +300,9 @@ fn synthetic_event_summary(kind: &ProvenanceEventKind, entry: &ManifestEntry) ->
         }
         ProvenanceEventKind::DocumentDeleted => {
             format!("deleted text document at {}", display_manifest_path(entry))
+        }
+        ProvenanceEventKind::DocumentHistoryPurged => {
+            format!("purged retained body history for {}", display_manifest_path(entry))
         }
         ProvenanceEventKind::SyncBootstrapped => "bootstrapped local projector state".to_owned(),
         ProvenanceEventKind::SyncReusedBinding => "reused existing checkout binding".to_owned(),
