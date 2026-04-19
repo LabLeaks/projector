@@ -1,3 +1,8 @@
+/**
+@module PROJECTOR.TESTS.RELEASE_PIPELINE
+Local release workflow and distribution proof tests for projector.
+*/
+// @fileimplements PROJECTOR.TESTS.RELEASE_PIPELINE
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;

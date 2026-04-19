@@ -68,21 +68,19 @@ It needs both:
 
 The local experience should feel like a synced working copy.
 
-### Yjs is a strong body-level fit
+### Yrs is the current body-level fit
 
-Yjs is promising for document bodies because it gives conflict-free convergence for overlapping text edits and separate awareness/presence semantics.
+`projector` now uses `yrs` for canonical text-body state so overlapping UTF-8 text edits converge through CRDT-backed document state rather than the old server-side three-way-merge fallback.
 
-Until that lands, v0 can still be useful with deterministic server-side three-way merge plus conflict markers on overlapping concurrent edits.
+### A text CRDT alone is not enough
 
-### Yjs alone is not enough
-
-Yjs does not by itself solve:
+The body engine does not by itself solve:
 
 - document creation and deletion
 - renames and moves
 - durable provenance and human-readable edit history
 
-So `projector` needs a document-set model above per-doc CRDT bodies.
+So `projector` still needs a document-set model above per-doc CRDT bodies.
 
 ## V0 product cut
 

@@ -439,14 +439,19 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         )
         .await?;
 
-        if let Some(update_blob) = payload.yrs_update_v1_bytes().map_err(StoreError::new)? {
-            self.transaction
-                .execute(
-                    "insert into document_body_updates (document_id, workspace_id, actor_id, update_blob) \
-                     values ($1, $2, $3, $4)",
-                    &[&document_id, &self.workspace_id, &actor_id, &update_blob],
-                )
-                .await?;
+        if let Some(update_blobs) = payload.yrs_update_v1_bytes().map_err(StoreError::new)? {
+            if update_blobs.len() == 1 {
+                self.transaction
+                    .execute(
+                        "insert into document_body_updates (document_id, workspace_id, actor_id, update_blob) \
+                         values ($1, $2, $3, $4)",
+                        &[&document_id, &self.workspace_id, &actor_id, &update_blobs[0]],
+                    )
+                    .await?;
+            } else {
+                sync_postgres_checkpoint_metadata(self.transaction, self.workspace_id, document_id)
+                    .await?;
+            }
         } else {
             sync_postgres_checkpoint_metadata(self.transaction, self.workspace_id, document_id)
                 .await?;

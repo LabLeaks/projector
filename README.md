@@ -51,7 +51,7 @@ my-app/
 
 Those files stay physically present in the repo so agents can read and edit them, but they do not need to become part of the normal product commit history.
 
-The canonical product contract lives under [specs/](/Users/gk/work/lableaks/projects/projector/specs/root.rs) and should be inspected with `special specs`. Root docs remain framing and design context unless a claim is explicitly carried into the contract.
+The canonical product contract lives under [specs/](/Users/gk/work/lableaks/projects/projector/specs/root.md) and should be inspected with `special specs`. Root docs remain framing and design context unless a claim is explicitly carried into the contract.
 
 ## Product shape
 
@@ -68,7 +68,8 @@ The canonical product contract lives under [specs/](/Users/gk/work/lableaks/proj
 - `projector add` is local-first and bootstraps local content immediately; `projector get` is remote-first
 - agents edit normal local files
 - the sync daemon pushes and pulls changes continuously
-- concurrent edits reconcile at the document layer instead of relying on git commits
+- concurrent edits reconcile through server-side CRDT-backed text state instead of relying on git commits
+- retained history supports restore, redact, purge, and path-scoped compaction policy without entering the repo's public VCS history
 
 ## Scope
 
@@ -95,7 +96,7 @@ It is not a general-purpose repo file sync system.
 
 ## Install
 
-The intended local install surface for `0.1.0` is the `projector` CLI:
+The intended local install surface for `0.2.0` is the `projector` CLI:
 
 ```sh
 brew install LabLeaks/homebrew-tap/projector

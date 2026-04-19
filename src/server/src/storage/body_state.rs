@@ -258,39 +258,41 @@ impl YrsTextCheckpoint {
         Self::from_doc(&doc)
     }
 
+    pub(crate) fn with_update_sequence_v1(&self, updates_v1: &[Vec<u8>]) -> Result<Self, String> {
+        let mut checkpoint = self.clone();
+        for update_v1 in updates_v1 {
+            checkpoint = checkpoint.with_update_v1(update_v1)?;
+        }
+        Ok(checkpoint)
+    }
+
     pub(crate) fn update_to_text_v1(
         &self,
         next_text: &str,
         client_id: u64,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<Vec<u8>>, String> {
         let doc = self.to_doc_with_client_id(client_id)?;
-        let current_text = self.materialized_text()?;
         let body = doc.get_or_insert_text("body");
-        let mut txn = doc.transact_mut();
-        let prefix = common_prefix_len(&current_text, next_text);
-        let suffix = common_suffix_len(&current_text[prefix..], &next_text[prefix..]);
-        let current_end = current_text.len().saturating_sub(suffix);
-        let next_end = next_text.len().saturating_sub(suffix);
-        let replace_start_chars = current_text[..prefix].chars().count() as u32;
-        let replace_len_chars = current_text[prefix..current_end].chars().count() as u32;
-        let inserted_len_chars = next_text[prefix..next_end].chars().count() as u32;
-        let inserted_text = &next_text[prefix..next_end];
-        if replace_len_chars > 0 && !inserted_text.is_empty() {
-            body.insert(&mut txn, replace_start_chars, inserted_text);
-            body.remove_range(
-                &mut txn,
-                replace_start_chars + inserted_len_chars,
-                replace_len_chars,
-            );
-        } else {
-            if replace_len_chars > 0 {
-                body.remove_range(&mut txn, replace_start_chars, replace_len_chars);
-            }
-            if !inserted_text.is_empty() {
-                body.insert(&mut txn, replace_start_chars, inserted_text);
-            }
+        let current_len = {
+            let txn = doc.transact();
+            body.len(&txn)
+        };
+        let mut updates = Vec::new();
+        if current_len > 0 {
+            let mut txn = doc.transact_mut();
+            body.remove_range(&mut txn, 0, current_len);
+            updates.push(txn.encode_update_v1());
         }
-        Ok(txn.encode_update_v1())
+        if !next_text.is_empty() {
+            let mut txn = doc.transact_mut();
+            body.insert(&mut txn, 0, next_text);
+            updates.push(txn.encode_update_v1());
+        }
+        if updates.is_empty() {
+            let txn = doc.transact_mut();
+            return Ok(vec![txn.encode_update_v1()]);
+        }
+        Ok(updates)
     }
 }
 
@@ -335,7 +337,33 @@ pub(crate) struct RetainedBodyHistoryPayload {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct StoredYrsTextUpdateV1 {
-    update_v1_hex: String,
+    #[serde(default)]
+    update_v1_hex: Option<String>,
+    #[serde(default)]
+    update_v1_hexes: Vec<String>,
+}
+
+impl StoredYrsTextUpdateV1 {
+    fn from_updates_v1(updates_v1: &[Vec<u8>]) -> Self {
+        Self {
+            update_v1_hex: None,
+            update_v1_hexes: updates_v1.iter().map(|update| encode_hex(update)).collect(),
+        }
+    }
+
+    fn decode_updates_v1(&self) -> Result<Vec<Vec<u8>>, String> {
+        if !self.update_v1_hexes.is_empty() {
+            return self
+                .update_v1_hexes
+                .iter()
+                .map(|update| decode_hex(update))
+                .collect();
+        }
+        match &self.update_v1_hex {
+            Some(update) => Ok(vec![decode_hex(update)?]),
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 impl RetainedBodyHistoryPayload {
@@ -384,16 +412,16 @@ impl RetainedBodyHistoryPayload {
 
     fn yrs_text_update_v1(
         base_text: impl Into<String>,
-        update_v1: &[u8],
+        updates_v1: &[Vec<u8>],
         materialized_text: impl Into<String>,
     ) -> Self {
         let materialized_text = materialized_text.into();
         Self {
             kind: RetainedBodyHistoryKind::YrsTextUpdateV1,
             base_text: base_text.into(),
-            storage_payload: serde_json::to_string(&StoredYrsTextUpdateV1 {
-                update_v1_hex: encode_hex(update_v1),
-            })
+            storage_payload: serde_json::to_string(&StoredYrsTextUpdateV1::from_updates_v1(
+                updates_v1,
+            ))
             .expect("yrs text update payload should serialize"),
             materialized_text,
             conflicted: false,
@@ -433,13 +461,13 @@ impl RetainedBodyHistoryPayload {
             .unwrap_or_else(|_| self.materialized_body_state())
     }
 
-    pub(crate) fn yrs_update_v1_bytes(&self) -> Result<Option<Vec<u8>>, String> {
+    pub(crate) fn yrs_update_v1_bytes(&self) -> Result<Option<Vec<Vec<u8>>>, String> {
         if self.kind != RetainedBodyHistoryKind::YrsTextUpdateV1 {
             return Ok(None);
         }
         let stored: StoredYrsTextUpdateV1 = serde_json::from_str(&self.storage_payload)
             .map_err(|err| format!("parse stored yrs update payload: {err}"))?;
-        Ok(Some(decode_hex(&stored.update_v1_hex)?))
+        Ok(Some(stored.decode_updates_v1()?))
     }
 
     pub(crate) fn to_public_revision(
@@ -582,11 +610,22 @@ impl BodyStateModel for FullTextBodyModel {
         if conflicted {
             RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, true)
         } else {
-            let update_v1 = YrsTextCheckpoint::from_materialized_text(&base_text)
+            let updates_v1 = YrsTextCheckpoint::from_materialized_text(&base_text)
                 .expect("base text should convert into a yrs checkpoint")
-                .update_to_text_v1(&materialized_text, PROJECTOR_YRS_SYNTHETIC_TEXT_CLIENT_ID)
-                .expect("next text should produce a yrs incremental update");
-            RetainedBodyHistoryPayload::yrs_text_update_v1(base_text, &update_v1, materialized_text)
+                .update_to_text_v1(
+                    &materialized_text,
+                    yrs_operation_client_id(
+                        "projector-history",
+                        &base_text,
+                        &materialized_text,
+                    ),
+                )
+                .expect("next text should produce yrs incremental updates");
+            RetainedBodyHistoryPayload::yrs_text_update_v1(
+                base_text,
+                &updates_v1,
+                materialized_text,
+            )
         }
     }
 
@@ -643,17 +682,18 @@ impl BodyStateModel for FullTextBodyModel {
                 }
                 let stored: StoredYrsTextUpdateV1 = serde_json::from_str(&storage_payload)
                     .expect("stored yrs update payload should parse");
-                let update_v1 = decode_hex(&stored.update_v1_hex)
+                let updates_v1 = stored
+                    .decode_updates_v1()
                     .expect("stored yrs update payload should decode");
                 let materialized_text = YrsTextCheckpoint::from_materialized_text(&base_text)
                     .expect("base text should convert into a yrs checkpoint")
-                    .with_update_v1(&update_v1)
+                    .with_update_sequence_v1(&updates_v1)
                     .expect("stored yrs update payload should apply")
                     .materialized_text()
                     .expect("stored yrs update payload should materialize");
                 RetainedBodyHistoryPayload::yrs_text_update_v1(
                     base_text,
-                    &update_v1,
+                    &updates_v1,
                     materialized_text,
                 )
             }
@@ -716,10 +756,10 @@ impl BodyStateModel for FullTextBodyModel {
 }
 
 impl FullTextBodyModel {
-    fn yrs_update_v1_from_payload(&self, storage_payload: &str) -> Result<Vec<u8>, String> {
+    fn yrs_update_v1_from_payload(&self, storage_payload: &str) -> Result<Vec<Vec<u8>>, String> {
         let stored: StoredYrsTextUpdateV1 = serde_json::from_str(storage_payload)
             .map_err(|err| format!("parse stored yrs update payload: {err}"))?;
-        decode_hex(&stored.update_v1_hex)
+        stored.decode_updates_v1()
     }
 
     fn yrs_checkpoint_from_state(
@@ -749,10 +789,10 @@ impl FullTextBodyModel {
             return Ok(payload.materialized_body_state());
         };
 
-        let update_v1 = self.yrs_update_v1_from_payload(payload.storage_payload())?;
+        let updates_v1 = self.yrs_update_v1_from_payload(payload.storage_payload())?;
         let checkpoint = self
             .yrs_checkpoint_from_state(previous_state)?
-            .with_update_v1(&update_v1)?;
+            .with_update_sequence_v1(&updates_v1)?;
         self.state_from_yrs_checkpoint(checkpoint)
     }
 }
@@ -801,6 +841,82 @@ impl BodyConvergenceResult {
     }
 }
 
+fn split_preserved_lines(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split_inclusive('\n').collect()
+    }
+}
+
+fn append_unique_variant(merged: &mut String, variant: &str) {
+    if variant.is_empty() {
+        return;
+    }
+    if !merged.is_empty() && !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(variant.trim_end_matches('\n'));
+    if variant.ends_with('\n') {
+        merged.push('\n');
+    }
+}
+
+fn deterministic_concurrent_text_union(
+    base_text: &str,
+    current_text: &str,
+    incoming_text: &str,
+) -> String {
+    if current_text == incoming_text {
+        return current_text.to_owned();
+    }
+    if current_text.contains(incoming_text) {
+        return current_text.to_owned();
+    }
+    if incoming_text.contains(current_text) {
+        return incoming_text.to_owned();
+    }
+
+    let base_lines = split_preserved_lines(base_text);
+    let current_lines = split_preserved_lines(current_text);
+    let incoming_lines = split_preserved_lines(incoming_text);
+    if !base_lines.is_empty()
+        && base_lines.len() == current_lines.len()
+        && base_lines.len() == incoming_lines.len()
+    {
+        let mut merged = String::new();
+        for index in 0..base_lines.len() {
+            let base_line = base_lines[index];
+            let current_line = current_lines[index];
+            let incoming_line = incoming_lines[index];
+            if current_line == incoming_line {
+                merged.push_str(current_line);
+            } else if current_line == base_line {
+                merged.push_str(incoming_line);
+            } else if incoming_line == base_line {
+                merged.push_str(current_line);
+            } else {
+                let mut variants = [current_line, incoming_line];
+                variants.sort_unstable();
+                append_unique_variant(&mut merged, variants[0]);
+                if variants[1] != variants[0] {
+                    append_unique_variant(&mut merged, variants[1]);
+                }
+            }
+        }
+        return merged;
+    }
+
+    let mut variants = [current_text, incoming_text];
+    variants.sort_unstable();
+    let mut merged = String::new();
+    append_unique_variant(&mut merged, variants[0]);
+    if variants[1] != variants[0] {
+        append_unique_variant(&mut merged, variants[1]);
+    }
+    merged
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct YrsConvergenceBodyEngine;
 
@@ -814,62 +930,52 @@ impl BodyConvergenceEngine for YrsConvergenceBodyEngine {
     ) -> BodyConvergenceResult {
         let current_text = current_state.materialized_text();
         let concurrent = current_text != base_text;
+        if !concurrent {
+            let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(incoming_text);
+            return BodyConvergenceResult {
+                retained_history: FULL_TEXT_BODY_MODEL.checkpoint_history(base_text, incoming_text),
+                canonical_state,
+                concurrent,
+            };
+        }
         let current_checkpoint = FULL_TEXT_BODY_MODEL
             .yrs_checkpoint_from_state(current_state)
             .expect("current canonical state should decode into a yrs checkpoint");
-        let base_checkpoint = if concurrent {
-            YrsTextCheckpoint::from_materialized_text(base_text)
-                .expect("base text should convert into a yrs checkpoint")
-        } else {
-            current_checkpoint.clone()
-        };
-        let incoming_update = base_checkpoint
+        let base_checkpoint = YrsTextCheckpoint::from_materialized_text(base_text)
+            .expect("base text should convert into a yrs checkpoint");
+        let incoming_updates = base_checkpoint
             .update_to_text_v1(
                 incoming_text,
                 yrs_operation_client_id(actor_id, base_text, incoming_text),
             )
-            .expect("incoming text should produce a yrs incremental update");
+            .expect("incoming text should produce yrs incremental updates");
         let canonical_checkpoint = current_checkpoint
-            .with_update_v1(&incoming_update)
-            .expect("yrs update should merge into current canonical state");
-        let canonical_state = FULL_TEXT_BODY_MODEL
+            .with_update_sequence_v1(&incoming_updates)
+            .expect("yrs updates should merge into current canonical state");
+        let candidate_state = FULL_TEXT_BODY_MODEL
             .state_from_yrs_checkpoint(canonical_checkpoint)
             .expect("merged yrs checkpoint should materialize as canonical text state");
+        let candidate_text = candidate_state.materialized_text();
+        if !candidate_text.contains(current_text) || !candidate_text.contains(incoming_text) {
+            let fallback_text =
+                deterministic_concurrent_text_union(base_text, current_text, incoming_text);
+            let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(&fallback_text);
+            return BodyConvergenceResult {
+                retained_history: FULL_TEXT_BODY_MODEL.checkpoint_history(base_text, &fallback_text),
+                canonical_state,
+                concurrent,
+            };
+        }
         BodyConvergenceResult {
             retained_history: RetainedBodyHistoryPayload::yrs_text_update_v1(
                 base_text,
-                &incoming_update,
-                canonical_state.materialized_text(),
+                &incoming_updates,
+                candidate_text,
             ),
-            canonical_state,
+            canonical_state: candidate_state,
             concurrent,
         }
     }
-}
-
-fn common_prefix_len(left: &str, right: &str) -> usize {
-    let mut total = 0;
-    for (left_char, right_char) in left.chars().zip(right.chars()) {
-        if left_char != right_char {
-            break;
-        }
-        total += left_char.len_utf8();
-    }
-    total
-}
-
-fn common_suffix_len(left: &str, right: &str) -> usize {
-    let mut total = 0;
-    for (left_char, right_char) in left.chars().rev().zip(right.chars().rev()) {
-        if left_char != right_char {
-            break;
-        }
-        total += left_char.len_utf8();
-        if total >= left.len() || total >= right.len() {
-            break;
-        }
-    }
-    total.min(left.len()).min(right.len())
 }
 
 fn yrs_operation_client_id(actor_id: &str, base_text: &str, incoming_text: &str) -> u64 {
@@ -972,6 +1078,21 @@ mod tests {
     }
 
     #[test]
+    fn yrs_update_handles_replacement_with_shared_suffix() {
+        let model = FullTextBodyModel;
+        let base_state = model.state_from_materialized_text("<p>revision five</p>\n");
+        let payload = model.history_from_stored_revision(
+            "<p>revision five</p>\n",
+            "<p>revision six</p>\n",
+            false,
+        );
+
+        let replayed = payload.replayed_body_state(Some(&base_state));
+
+        assert_eq!(replayed.materialized_text(), "<p>revision six</p>\n");
+    }
+
+    #[test]
     fn yrs_engine_converges_overlapping_edits_without_conflict_markers() {
         let engine = YrsConvergenceBodyEngine;
         let base_text = "alpha\nbeta\ngamma\n";
@@ -989,6 +1110,26 @@ mod tests {
         let merged = result.canonical_state().materialized_text();
         assert!(!merged.contains("<<<<<<<"));
         assert!(merged.contains("BETA") || merged.contains("BETTER"));
+    }
+
+    #[test]
+    fn yrs_engine_preserves_both_concurrent_whole_body_replacements() {
+        let engine = YrsConvergenceBodyEngine;
+        let base_text = "<p>shared base</p>\n";
+        let base_state = FullTextBodyModel.state_from_materialized_text(base_text);
+        let current =
+            engine.apply_update("actor-a", base_text, &base_state, "<p>repo a edit</p>\n");
+        let result = engine.apply_update(
+            "actor-b",
+            base_text,
+            current.canonical_state(),
+            "<p>repo b edit</p>\n",
+        );
+
+        let merged = result.canonical_state().materialized_text();
+        assert!(!merged.contains("<<<<<<<"));
+        assert!(merged.contains("repo a edit"));
+        assert!(merged.contains("repo b edit"));
     }
 
     #[test]

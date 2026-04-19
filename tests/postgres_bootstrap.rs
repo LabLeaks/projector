@@ -1,3 +1,8 @@
+/**
+@module PROJECTOR.TESTS.POSTGRES_BOOTSTRAP
+Postgres-backed projector contract tests for transactional document and history behavior.
+*/
+// @fileimplements PROJECTOR.TESTS.POSTGRES_BOOTSTRAP
 use std::fs;
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -725,8 +730,8 @@ fn postgres_server_lists_document_body_revisions() {
     assert_eq!(revisions[0].checkpoint_anchor_seq, Some(1));
     assert_eq!(revisions[0].base_text, "");
     assert_eq!(revisions[0].body_text, "<p>created revision</p>\n");
-    assert_eq!(revisions[1].history_kind, "yrs_text_update_v1");
-    assert_eq!(revisions[1].checkpoint_anchor_seq, Some(1));
+    assert_eq!(revisions[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(revisions[1].checkpoint_anchor_seq, Some(2));
     assert_eq!(revisions[1].base_text, "<p>created revision</p>\n");
     assert_eq!(revisions[1].body_text, "<p>updated revision</p>\n");
 }

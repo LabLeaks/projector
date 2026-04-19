@@ -339,14 +339,19 @@ fn replay_document_revision_states(
     let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
     let mut replayed = Vec::new();
     for revision in revisions {
+        let current_state = states.get(revision.document_id.as_str());
         let previous_state = if revision.history_kind == RetainedBodyHistoryKind::YrsTextUpdateV1 {
-            revision
-                .effective_checkpoint_anchor_seq()
-                .and_then(|anchor_seq| {
-                    anchored_states.get(&(revision.document_id.clone(), anchor_seq))
+            current_state
+                .filter(|state| state.materialized_text() == revision.base_text)
+                .or_else(|| {
+                    revision
+                        .effective_checkpoint_anchor_seq()
+                        .and_then(|anchor_seq| {
+                            anchored_states.get(&(revision.document_id.clone(), anchor_seq))
+                        })
                 })
         } else {
-            states.get(revision.document_id.as_str())
+            current_state
         };
         let next_state = revision.replayed_body_state(previous_state);
         if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
@@ -361,11 +366,24 @@ fn replay_document_revision_states(
     replayed
 }
 
-fn is_checkpoint_history_kind(kind: RetainedBodyHistoryKind) -> bool {
-    matches!(
-        kind,
-        RetainedBodyHistoryKind::FullTextCheckpointV1 | RetainedBodyHistoryKind::YrsTextCheckpointV1
-    )
+fn replay_previous_state<'a>(
+    revision: &FileBodyRevision,
+    states: &'a HashMap<String, CanonicalBodyState>,
+    anchored_states: &'a HashMap<(String, u64), CanonicalBodyState>,
+) -> Option<&'a CanonicalBodyState> {
+    let current_state = states.get(revision.document_id.as_str());
+    if revision.history_kind != RetainedBodyHistoryKind::YrsTextUpdateV1 {
+        return current_state;
+    }
+    current_state
+        .filter(|state| state.materialized_text() == revision.base_text)
+        .or_else(|| {
+            revision
+                .effective_checkpoint_anchor_seq()
+                .and_then(|anchor_seq| {
+                    anchored_states.get(&(revision.document_id.clone(), anchor_seq))
+                })
+        })
 }
 
 pub(crate) fn compact_document_body_revisions(
@@ -386,7 +404,6 @@ pub(crate) fn compact_document_body_revisions(
     let replayed = replay_document_revision_states(document_revisions);
     let mut compacted = Vec::new();
     let mut previous_kept_text = None::<String>;
-    let mut last_checkpoint_seq = None::<u64>;
 
     for (index, (revision, state)) in replayed.into_iter().enumerate() {
         let keep = index >= older_len || index % policy.frequency == 0;
@@ -397,41 +414,19 @@ pub(crate) fn compact_document_body_revisions(
         let base_text = previous_kept_text
             .clone()
             .unwrap_or_else(|| revision.base_text.clone());
-        let payload = if index < older_len || is_checkpoint_history_kind(revision.history_kind) {
-            FULL_TEXT_BODY_MODEL.checkpoint_history(base_text.clone(), state.materialized_text())
-        } else if revision.conflicted {
-            FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                base_text.clone(),
-                state.materialized_text(),
-                true,
-            )
-        } else {
-            FULL_TEXT_BODY_MODEL.history_from_stored_revision(
-                base_text.clone(),
-                state.materialized_text(),
-                false,
-            )
-        };
-        let checkpoint_anchor_seq = if payload.kind() == RetainedBodyHistoryKind::YrsTextUpdateV1 {
-            last_checkpoint_seq
-        } else {
-            Some(revision.seq)
-        };
+        let payload = FULL_TEXT_BODY_MODEL.checkpoint_history(base_text, state.materialized_text());
         let compacted_revision = FileBodyRevision {
             seq: revision.seq,
             workspace_cursor: revision.workspace_cursor,
             actor_id: revision.actor_id,
             document_id: revision.document_id,
-            checkpoint_anchor_seq,
+            checkpoint_anchor_seq: Some(revision.seq),
             history_kind: payload.kind(),
             base_text: payload.base_text().to_owned(),
             body_text: payload.storage_payload().to_owned(),
             conflicted: payload.conflicted(),
             timestamp_ms: revision.timestamp_ms,
         };
-        if compacted_revision.history_kind != RetainedBodyHistoryKind::YrsTextUpdateV1 {
-            last_checkpoint_seq = Some(compacted_revision.seq);
-        }
         previous_kept_text = Some(state.materialized_text().to_owned());
         compacted.push(compacted_revision);
     }
@@ -445,15 +440,7 @@ pub(crate) fn replay_body_revision_run(
     let mut states = HashMap::<String, CanonicalBodyState>::new();
     let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
     for revision in revisions {
-        let previous_state = if revision.history_kind == RetainedBodyHistoryKind::YrsTextUpdateV1 {
-            revision
-                .effective_checkpoint_anchor_seq()
-                .and_then(|anchor_seq| {
-                    anchored_states.get(&(revision.document_id.clone(), anchor_seq))
-                })
-        } else {
-            states.get(revision.document_id.as_str())
-        };
+        let previous_state = replay_previous_state(&revision, &states, &anchored_states);
         let next_state = revision.replayed_body_state(previous_state);
         if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
             anchored_states.insert(
@@ -2165,4 +2152,93 @@ fn current_time_ms() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("time before unix epoch")
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::body_state::{BodyConvergenceEngine, YrsConvergenceBodyEngine};
+
+    fn append_and_compact_revision(
+        revisions: &mut Vec<FileBodyRevision>,
+        seq: u64,
+        document_id: &str,
+        previous_text: &str,
+        next_text: &str,
+    ) {
+        let payload = if seq == 1 {
+            FULL_TEXT_BODY_MODEL.checkpoint_history("", next_text)
+        } else {
+            YrsConvergenceBodyEngine
+                .apply_update(
+                    "tester",
+                    previous_text,
+                    &FULL_TEXT_BODY_MODEL.state_from_materialized_text(previous_text),
+                    next_text,
+                )
+                .retained_history()
+                .clone()
+        };
+        let checkpoint_anchor_seq =
+            if payload.kind() == RetainedBodyHistoryKind::YrsTextUpdateV1 {
+                latest_checkpoint_anchor_seq(revisions.clone(), document_id)
+            } else {
+                Some(seq)
+            };
+        revisions.push(FileBodyRevision::from_retained_history(
+            seq,
+            seq,
+            "tester".to_owned(),
+            document_id.to_owned(),
+            checkpoint_anchor_seq,
+            &payload,
+            seq as u128,
+        ));
+        *revisions = compact_document_body_revisions(
+            revisions,
+            document_id,
+            &HistoryCompactionPolicy {
+                revisions: 2,
+                frequency: 2,
+            },
+        )
+        .expect("compaction should succeed");
+    }
+
+    #[test]
+    fn repeated_compaction_preserves_latest_text_across_checkpoint_update_runs() {
+        let document_id = "doc-1";
+        let mut revisions = Vec::new();
+        let mut previous_text = String::new();
+        for (seq, next_text) in [
+            "<p>revision one</p>\n",
+            "<p>revision two</p>\n",
+            "<p>revision three</p>\n",
+            "<p>revision four</p>\n",
+            "<p>revision five</p>\n",
+            "<p>revision six</p>\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let seq = seq as u64 + 1;
+            append_and_compact_revision(
+                &mut revisions,
+                seq,
+                document_id,
+                &previous_text,
+                next_text,
+            );
+            let reconstructed = replay_body_revision_run(revisions.clone());
+            assert_eq!(
+                reconstructed
+                    .get(document_id)
+                    .expect("document state should exist")
+                    .materialized_text(),
+                next_text,
+                "replay after seq {seq} should preserve latest text; retained revisions: {revisions:#?}",
+            );
+            previous_text = next_text.to_owned();
+        }
+    }
 }

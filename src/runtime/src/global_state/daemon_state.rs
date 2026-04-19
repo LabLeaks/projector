@@ -52,7 +52,10 @@ impl FileMachineDaemonStateStore {
                 format!("failed to encode machine daemon state: {err}"),
             )
         })?;
-        fs::write(self.home.daemon_state_path(), content)
+        let path = self.home.daemon_state_path();
+        let temp_path = path.with_extension("json.tmp");
+        fs::write(&temp_path, content)?;
+        fs::rename(temp_path, path)
     }
 
     pub fn write_running(&self, pid: u32) -> Result<MachineDaemonState, io::Error> {
