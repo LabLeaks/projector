@@ -31,15 +31,11 @@ Projector renders readable document history as retained text snapshots and diffs
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY
 @planned
-Projector can attach a path-scoped history compaction policy that keeps recent document body history at full fidelity and older document body history as sparser retained checkpoints.
+Projector can attach a path-scoped history compaction policy that keeps a recent window of document body history at full fidelity and older document body history as sparser retained checkpoints.
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY_INHERITANCE
 @planned
 Projector resolves the effective history compaction policy for one file from the nearest configured file or ancestor-folder policy override.
-
-@spec PROJECTOR.HISTORY.DEFAULT_COMPACTION_POLICY
-@planned
-Projector keeps the most recent 100 document body revisions at full fidelity and retains 1 checkpoint out of every 10 older revisions unless a nearer path policy overrides that default.
 
 @spec PROJECTOR.HISTORY.CONTENT_REDACTION
 Projector can rewrite one document's retained checkpoint and update history by repo-relative path to replace exact matched text with `[REDACTED]` while preserving the document's readable retained history.
@@ -71,7 +67,7 @@ Projector records destructive document-history surgery durably without retaining
 @spec PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR
 `POST /history/workspace/restore` applies the reconstructed live workspace state for an earlier workspace cursor as current server state.
 
-@spec PROJECTOR.SERVER.HISTORY.CHECKPOINTS_CDRT_BODY_STATE
+@spec PROJECTOR.SERVER.HISTORY.CHECKPOINTS_CRDT_BODY_STATE
 @planned
 Server history storage can retain checkpointed document body snapshots together with CRDT update history so older dense update runs can compact without losing readable history reconstruction.
 
@@ -101,5 +97,5 @@ Server history storage can retain checkpointed document body snapshots together 
 
 @spec PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
 @planned
-Server history storage can enforce the effective path-scoped history compaction policy by retaining dense recent body history and sparser older checkpoints without affecting live current document body state.
+Server history storage can enforce the effective path-scoped history compaction policy during background history maintenance by retaining dense recent body history and sparser older checkpoints without affecting live current document body state.
 */

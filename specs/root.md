@@ -61,6 +61,9 @@ CLI retained-history redaction behavior.
 ### `@group PROJECTOR.CLI.PURGE`
 CLI retained-history purge behavior.
 
+### `@group PROJECTOR.CLI.COMPACT`
+CLI retained-history compaction policy behavior.
+
 ### `@group PROJECTOR.CLI.STATUS`
 Status command behavior.
 

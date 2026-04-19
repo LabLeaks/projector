@@ -56,6 +56,18 @@ When `projector purge <repo-relative-path>` runs in an interactive terminal with
 @spec PROJECTOR.CLI.PURGE.BROWSES_CLEARABLE_REVISIONS
 When `projector purge <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector opens a terminal browser over the retained revisions whose body content would be cleared before applying.
 
+@spec PROJECTOR.CLI.COMPACT.SETS_PATH_POLICY
+@planned
+`projector compact <repo-relative-path> --revisions <count> --frequency <count>` sets a retained-history compaction policy override for that file or folder path instead of compacting history immediately.
+
+@spec PROJECTOR.CLI.COMPACT.REPORTS_EFFECTIVE_POLICY
+@planned
+`projector compact <repo-relative-path>` without mutation flags reports the effective retained-history compaction policy for that path together with whether it comes from a file override, an ancestor-folder override, or the inherited default.
+
+@spec PROJECTOR.CLI.COMPACT.CLEARS_PATH_OVERRIDE
+@planned
+`projector compact <repo-relative-path> --clear` removes that path's local retained-history compaction policy override so the path falls back to the nearest inherited policy.
+
 @spec PROJECTOR.CLI.CONNECT.PERSISTS_GLOBAL_PROFILE_REGISTRY
 `projector connect` interactively, or `projector connect --id <profile> --server <server-addr>`, persists one connected server profile in machine-global projector state.
 
