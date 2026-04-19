@@ -53,6 +53,9 @@ When `projector redact <exact-text> <repo-relative-path>` runs in an interactive
 @spec PROJECTOR.CLI.PURGE.INTERACTIVE_CONFIRMATION
 When `projector purge <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector previews the retained revisions that would be cleared and can apply the purge after terminal confirmation.
 
+@spec PROJECTOR.CLI.PURGE.BROWSES_CLEARABLE_REVISIONS
+When `projector purge <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector opens a terminal browser over the retained revisions whose body content would be cleared before applying.
+
 @spec PROJECTOR.CLI.CONNECT.PERSISTS_GLOBAL_PROFILE_REGISTRY
 `projector connect` interactively, or `projector connect --id <profile> --server <server-addr>`, persists one connected server profile in machine-global projector state.
 

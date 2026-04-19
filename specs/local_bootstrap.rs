@@ -4884,13 +4884,52 @@ fn projector_purge_can_apply_after_terminal_confirmation() {
     let output = run_projector_tty(
         &repo,
         &["purge", "private/briefs/cli-purge-tty.html"],
-        "y\n",
+        "\ry",
     );
-    assert!(output.contains("Apply retained-history purge? [y/N]"));
+    assert!(output.contains("clearable_revisions: 1"));
+    assert!(output.contains("selected_seq: 1"));
     assert!(output.contains("purge: applied"));
 
     let history = run_projector(&repo, &["history", "private/briefs/cli-purge-tty.html"]);
     assert!(history.contains("snapshot_text: \"\""));
+}
+
+// @verifies PROJECTOR.CLI.PURGE.BROWSES_CLEARABLE_REVISIONS
+#[test]
+fn projector_purge_uses_tty_browser_to_preview_clearable_revisions() {
+    let repo = temp_repo("cli-purge-browser");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/cli-purge-browser.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/cli-purge-browser.html"),
+        "<p>updated revision</p>\n",
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let output = run_projector_tty(
+        &repo,
+        &["purge", "private/briefs/cli-purge-browser.html"],
+        "q",
+    );
+    assert!(output.contains("clearable_revisions: 2"));
+    assert!(output.contains("selected_seq: 1"));
+    assert!(output.contains("purge: cancelled"));
+
+    let history = run_projector(&repo, &["history", "private/briefs/cli-purge-browser.html"]);
+    assert!(history.contains("updated revision"));
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR

@@ -15,6 +15,7 @@ use crate::sync_entry_cli::{
 };
 
 use super::args::{parse_purge_args, parse_redact_args};
+use super::purge_browser::{PurgeBrowserExit, browse_purge_matches};
 use super::redact_browser::{RedactBrowserExit, browse_redaction_matches};
 
 pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -95,10 +96,36 @@ pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         &prepared.document_id,
         20,
     )?;
+    let clearable_revision_count = clearable_revisions.len();
+
+    if is_interactive_terminal() && !purge_args.confirm {
+        match browse_purge_matches(&prepared.requested_path, &clearable_revisions)? {
+            PurgeBrowserExit::Apply { selected_seq } => {
+                println!("clearable_revisions: {clearable_revision_count}");
+                println!("selected_seq: {selected_seq}");
+                let expected_match_seqs = clearable_revisions
+                    .iter()
+                    .map(|revision| revision.seq)
+                    .collect::<Vec<_>>();
+                prepared.transport.purge_document_body_history(
+                    &prepared.binding,
+                    &prepared.document_id,
+                    Some(&expected_match_seqs),
+                )?;
+                println!("purge: applied");
+            }
+            PurgeBrowserExit::Cancelled { selected_seq } => {
+                println!("clearable_revisions: {clearable_revision_count}");
+                println!("selected_seq: {selected_seq}");
+                println!("purge: cancelled");
+            }
+        }
+        return Ok(());
+    }
 
     println!("path: {}", prepared.requested_path.display());
     println!("document_id: {}", prepared.document_id.as_str());
-    println!("clearable_revisions: {}", clearable_revisions.len());
+    println!("clearable_revisions: {clearable_revision_count}");
     for revision in &clearable_revisions {
         println!(
             "revision: seq={} kind={} body_len={}",
