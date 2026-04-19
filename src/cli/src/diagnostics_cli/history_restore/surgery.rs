@@ -4,6 +4,7 @@ Owns scripted retained-history redaction and purge flows by resolving a repo-rel
 */
 // @fileimplements PROJECTOR.EDGE.HISTORY_SURGERY_CLI
 use std::error::Error;
+use std::io::{self, IsTerminal, Write};
 
 use projector_runtime::{HttpTransport, Transport};
 
@@ -27,8 +28,8 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             revision.base_text.contains(&redact_args.exact_text)
                 || revision.body_text.contains(&redact_args.exact_text)
         })
-        .count();
-    if matching_revisions == 0 {
+        .collect::<Vec<_>>();
+    if matching_revisions.is_empty() {
         return Err(format!(
             "no retained revisions for {} contain the exact text {:?}",
             prepared.requested_path.display(),
@@ -39,11 +40,17 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 
     println!("path: {}", prepared.requested_path.display());
     println!("document_id: {}", prepared.document_id.as_str());
-    println!("matching_revisions: {matching_revisions}");
+    println!("matching_revisions: {}", matching_revisions.len());
     println!("replacement: [REDACTED]");
+    for revision in &matching_revisions {
+        print_redaction_match(revision, &redact_args.exact_text);
+    }
 
-    if !redact_args.confirm {
+    if !should_apply_history_surgery(redact_args.confirm, "Apply retained-history redaction? [y/N] ")? {
         println!("next: rerun with --confirm to apply this redaction");
+        if is_interactive_terminal() {
+            println!("redaction: cancelled");
+        }
         return Ok(());
     }
 
@@ -72,15 +79,26 @@ pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let clearable_revisions = revisions
         .iter()
         .filter(|revision| !revision.base_text.is_empty() || !revision.body_text.is_empty())
-        .count();
+        .collect::<Vec<_>>();
 
     println!("path: {}", prepared.requested_path.display());
     println!("document_id: {}", prepared.document_id.as_str());
     println!("retained_revisions: {}", revisions.len());
-    println!("clearable_revisions: {clearable_revisions}");
+    println!("clearable_revisions: {}", clearable_revisions.len());
+    for revision in &clearable_revisions {
+        println!(
+            "revision: seq={} kind={} body_len={}",
+            revision.seq,
+            revision.history_kind,
+            revision.body_text.len()
+        );
+    }
 
-    if !purge_args.confirm {
+    if !should_apply_history_surgery(purge_args.confirm, "Apply retained-history purge? [y/N] ")? {
         println!("next: rerun with --confirm to purge retained history");
+        if is_interactive_terminal() {
+            println!("purge: cancelled");
+        }
         return Ok(());
     }
 
@@ -127,4 +145,50 @@ fn prepare_document_history_surgery(
         document_id,
         transport,
     })
+}
+
+fn is_interactive_terminal() -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+fn should_apply_history_surgery(confirm_flag: bool, prompt: &str) -> Result<bool, Box<dyn Error>> {
+    if confirm_flag {
+        return Ok(true);
+    }
+    if !is_interactive_terminal() {
+        return Ok(false);
+    }
+
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut response = String::new();
+    io::stdin().read_line(&mut response)?;
+    Ok(matches!(response.trim(), "y" | "Y" | "yes" | "YES" | "Yes"))
+}
+
+fn print_redaction_match(revision: &projector_domain::DocumentBodyRevision, exact_text: &str) {
+    let occurrences =
+        revision.base_text.matches(exact_text).count() + revision.body_text.matches(exact_text).count();
+    println!(
+        "match: seq={} kind={} occurrences={}",
+        revision.seq, revision.history_kind, occurrences
+    );
+    for excerpt in redaction_excerpts(revision, exact_text) {
+        println!("  excerpt: {excerpt}");
+    }
+}
+
+fn redaction_excerpts(
+    revision: &projector_domain::DocumentBodyRevision,
+    exact_text: &str,
+) -> Vec<String> {
+    let mut excerpts = revision
+        .body_text
+        .lines()
+        .chain(revision.base_text.lines())
+        .filter(|line| line.contains(exact_text))
+        .map(|line| line.trim().to_owned())
+        .collect::<Vec<_>>();
+    excerpts.truncate(3);
+    excerpts
 }

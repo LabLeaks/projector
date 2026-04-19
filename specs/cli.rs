@@ -41,8 +41,14 @@ When materialized text files contain projector conflict markers from a concurren
 @spec PROJECTOR.CLI.REDACT.PREVIEWS_AND_APPLIES_EXACT_TEXT_REWRITE
 `projector redact <exact-text> <repo-relative-path>` previews how many retained revisions for the bound live document contain that exact text, and adding `--confirm` rewrites those retained revisions by replacing exact matches with `[REDACTED]`.
 
+@spec PROJECTOR.CLI.REDACT.INTERACTIVE_CONFIRMATION
+When `projector redact <exact-text> <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector previews the matching retained revisions and can apply the redaction after terminal confirmation.
+
 @spec PROJECTOR.CLI.PURGE.PREVIEWS_AND_APPLIES_RETAINED_HISTORY_SURGERY
 `projector purge <repo-relative-path>` previews how many retained revisions for the bound live document would be cleared, and adding `--confirm` clears the retained body content while leaving live current document state unchanged.
+
+@spec PROJECTOR.CLI.PURGE.INTERACTIVE_CONFIRMATION
+When `projector purge <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector previews the retained revisions that would be cleared and can apply the purge after terminal confirmation.
 
 @spec PROJECTOR.CLI.CONNECT.PERSISTS_GLOBAL_PROFILE_REGISTRY
 `projector connect` interactively, or `projector connect --id <profile> --server <server-addr>`, persists one connected server profile in machine-global projector state.

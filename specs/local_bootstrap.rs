@@ -4247,6 +4247,9 @@ fn assert_projector_redact_rewrites_history() {
     assert!(preview.contains("path: private/briefs/cli-redact.html"));
     assert!(preview.contains("matching_revisions: 2"));
     assert!(preview.contains("replacement: [REDACTED]"));
+    assert!(preview.contains("match: seq=1"));
+    assert!(preview.contains("match: seq=2"));
+    assert!(preview.contains(&format!("excerpt: <p>created {secret} revision</p>")));
     assert!(preview.contains("next: rerun with --confirm to apply this redaction"));
 
     let before = run_projector(&repo, &["history", "private/briefs/cli-redact.html"]);
@@ -4307,6 +4310,8 @@ fn assert_projector_purge_clears_retained_history_and_records_audit() {
     assert!(preview.contains("path: private/briefs/cli-purge.html"));
     assert!(preview.contains("retained_revisions: 2"));
     assert!(preview.contains("clearable_revisions: 2"));
+    assert!(preview.contains("revision: seq=1 kind=yrs_text_checkpoint_v1"));
+    assert!(preview.contains("revision: seq=2 kind=yrs_text_update_v1"));
     assert!(preview.contains("next: rerun with --confirm to purge retained history"));
 
     let history_before = run_projector(&repo, &["history", "private/briefs/cli-purge.html"]);
@@ -4366,6 +4371,68 @@ fn history_purge_clears_retained_history_by_path() {
 #[test]
 fn history_purge_records_non_secret_audit_trail() {
     assert_projector_purge_clears_retained_history_and_records_audit();
+}
+
+// @verifies PROJECTOR.CLI.REDACT.INTERACTIVE_CONFIRMATION
+#[test]
+fn projector_redact_can_apply_after_terminal_confirmation() {
+    let repo = temp_repo("cli-redact-tty");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    let secret = "SECRET-123";
+    fs::write(
+        repo.join("private/briefs/cli-redact-tty.html"),
+        format!("<p>created {secret} revision</p>\n"),
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let output = run_projector_tty(
+        &repo,
+        &["redact", secret, "private/briefs/cli-redact-tty.html"],
+        "y\n",
+    );
+    assert!(output.contains("Apply retained-history redaction? [y/N]"));
+    assert!(output.contains("redaction: applied"));
+
+    let history = run_projector(&repo, &["history", "private/briefs/cli-redact-tty.html"]);
+    assert!(!history.contains(secret));
+    assert!(history.contains("[REDACTED]"));
+}
+
+// @verifies PROJECTOR.CLI.PURGE.INTERACTIVE_CONFIRMATION
+#[test]
+fn projector_purge_can_apply_after_terminal_confirmation() {
+    let repo = temp_repo("cli-purge-tty");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/cli-purge-tty.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let output = run_projector_tty(
+        &repo,
+        &["purge", "private/briefs/cli-purge-tty.html"],
+        "y\n",
+    );
+    assert!(output.contains("Apply retained-history purge? [y/N]"));
+    assert!(output.contains("purge: applied"));
+
+    let history = run_projector(&repo, &["history", "private/briefs/cli-purge-tty.html"]);
+    assert!(history.contains("snapshot_text: \"\""));
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR
