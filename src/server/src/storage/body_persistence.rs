@@ -222,13 +222,19 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
                  from document_body_updates \
                  where workspace_id = $1 and document_id = $2 and seq > $3 \
                  order by seq asc",
-                &[&self.workspace_id, &document_id, &(compacted_through_seq as i64)],
+                &[
+                    &self.workspace_id,
+                    &document_id,
+                    &(compacted_through_seq as i64),
+                ],
             )
             .await?;
-        let checkpoint = update_rows.into_iter().try_fold(base_checkpoint, |checkpoint, row| {
-            checkpoint.with_update_v1(&row.get::<_, Vec<u8>>("update_blob"))
-        })
-        .map_err(StoreError::new)?;
+        let checkpoint = update_rows
+            .into_iter()
+            .try_fold(base_checkpoint, |checkpoint, row| {
+                checkpoint.with_update_v1(&row.get::<_, Vec<u8>>("update_blob"))
+            })
+            .map_err(StoreError::new)?;
         FULL_TEXT_BODY_MODEL
             .state_from_yrs_checkpoint(checkpoint)
             .map_err(StoreError::new)
@@ -266,30 +272,29 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         document_id: &str,
         payload: &RetainedBodyHistoryPayload,
     ) -> Result<(), StoreError> {
-        let checkpoint_anchor_seq = if payload.kind()
-            == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1
-        {
-            self.transaction
-                .query_opt(
-                    "select seq, checkpoint_anchor_seq, history_kind \
+        let checkpoint_anchor_seq =
+            if payload.kind() == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1 {
+                self.transaction
+                    .query_opt(
+                        "select seq, checkpoint_anchor_seq, history_kind \
                      from document_body_revisions \
                      where workspace_id = $1 and document_id = $2 \
                      order by seq desc \
                      limit 1",
-                    &[&self.workspace_id, &document_id],
-                )
-                .await?
-                .and_then(|row| {
-                    row.get::<_, Option<i64>>("checkpoint_anchor_seq")
-                        .map(|seq| seq as u64)
-                        .or_else(|| match row.get::<_, String>("history_kind").as_str() {
-                            "yrs_text_update_v1" => None,
-                            _ => Some(row.get::<_, i64>("seq") as u64),
-                        })
-                })
-        } else {
-            Some(event_cursor)
-        };
+                        &[&self.workspace_id, &document_id],
+                    )
+                    .await?
+                    .and_then(|row| {
+                        row.get::<_, Option<i64>>("checkpoint_anchor_seq")
+                            .map(|seq| seq as u64)
+                            .or_else(|| match row.get::<_, String>("history_kind").as_str() {
+                                "yrs_text_update_v1" => None,
+                                _ => Some(row.get::<_, i64>("seq") as u64),
+                            })
+                    })
+            } else {
+                Some(event_cursor)
+            };
         insert_body_revision_tx(
             self.transaction,
             self.workspace_id,
@@ -310,12 +315,8 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
                 )
                 .await?;
         } else {
-            sync_postgres_checkpoint_metadata(
-                self.transaction,
-                self.workspace_id,
-                document_id,
-            )
-            .await?;
+            sync_postgres_checkpoint_metadata(self.transaction, self.workspace_id, document_id)
+                .await?;
         }
         Ok(())
     }

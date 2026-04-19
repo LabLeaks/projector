@@ -958,7 +958,10 @@ mod tests {
         );
 
         assert_eq!(created.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
-        assert_eq!(restored.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
+        assert_eq!(
+            restored.kind(),
+            RetainedBodyHistoryKind::YrsTextCheckpointV1
+        );
     }
 
     #[test]

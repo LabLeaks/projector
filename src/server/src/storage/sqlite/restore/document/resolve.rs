@@ -82,16 +82,35 @@ pub(super) fn resolve_document_restore_target(
             request.document_id, request.seq
         )));
     }
-    let target_state = replay_body_revision_run(body_revisions.into_iter().filter(|revision| {
-        revision.document_id == request.document_id && revision.seq <= request.seq
-    }))
-    .remove(request.document_id.as_str())
-    .ok_or_else(|| {
-        StoreError::new(format!(
-            "document {} has no body revision {}",
-            request.document_id, request.seq
-        ))
-    })?;
+    let target_revisions = body_revisions
+        .into_iter()
+        .filter(|revision| {
+            revision.document_id == request.document_id && revision.seq <= request.seq
+        })
+        .collect::<Vec<_>>();
+    let fallback_target_state = target_revisions
+        .last()
+        .ok_or_else(|| {
+            StoreError::new(format!(
+                "document {} has no body revision {}",
+                request.document_id, request.seq
+            ))
+        })?
+        .materialized_body_state();
+    let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())
+        .remove(request.document_id.as_str())
+        .ok_or_else(|| {
+            StoreError::new(format!(
+                "document {} has no body revision {}",
+                request.document_id, request.seq
+            ))
+        })?;
+    let target_state =
+        if replayed_target_state.materialized_text() == fallback_target_state.materialized_text() {
+            replayed_target_state
+        } else {
+            fallback_target_state
+        };
 
     Ok(DocumentRestoreResolution {
         state,

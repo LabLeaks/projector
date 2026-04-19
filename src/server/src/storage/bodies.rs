@@ -180,11 +180,18 @@ pub(crate) fn file_restore_document_body_revision(
     snapshot.manifest.entries[entry_index].mount_relative_path = target_mount_relative_path.clone();
     snapshot.manifest.entries[entry_index].relative_path = target_relative_path.clone();
 
-    let target_state = replay_body_revision_run(body_revisions.into_iter().filter(|revision| {
-        revision.document_id == request.document_id && revision.seq <= request.seq
-    }))
-    .remove(request.document_id.as_str())
-    .unwrap_or(fallback_target_state);
+    let replayed_target_state =
+        replay_body_revision_run(body_revisions.into_iter().filter(|revision| {
+            revision.document_id == request.document_id && revision.seq <= request.seq
+        }))
+        .remove(request.document_id.as_str())
+        .unwrap_or_else(|| fallback_target_state.clone());
+    let target_state =
+        if replayed_target_state.materialized_text() == fallback_target_state.materialized_text() {
+            replayed_target_state
+        } else {
+            fallback_target_state
+        };
     body_persistence.write_current_state(&mut snapshot, &document_id, &target_state);
 
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
@@ -395,32 +402,46 @@ pub(crate) async fn postgres_restore_document_body_revision(
             .await?;
     }
 
-    let target_state = replay_body_revision_run(target_rows.into_iter().map(|row| {
-        let history_kind =
-            RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
-                .expect("stored retained body history kind should parse");
-        super::history::FileBodyRevision {
-            seq: row.get::<_, i64>("seq") as u64,
-            workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
-            actor_id: String::new(),
-            document_id: request.document_id.clone(),
-            checkpoint_anchor_seq: row
-                .get::<_, Option<i64>>("checkpoint_anchor_seq")
-                .map(|seq| seq as u64),
-            history_kind,
-            base_text: row.get::<_, String>("base_text"),
-            body_text: row.get::<_, String>("body_text"),
-            conflicted: row.get::<_, bool>("conflicted"),
-            timestamp_ms: 0,
-        }
-    }))
-    .remove(request.document_id.as_str())
-    .ok_or_else(|| {
-        StoreError::new(format!(
-            "document {} has no body revision {}",
-            request.document_id, request.seq
-        ))
-    })?;
+    let target_revisions = target_rows
+        .into_iter()
+        .map(|row| {
+            let history_kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .expect("stored retained body history kind should parse");
+            super::history::FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
+                actor_id: String::new(),
+                document_id: request.document_id.clone(),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: 0,
+            }
+        })
+        .collect::<Vec<_>>();
+    let fallback_target_state = target_revisions
+        .last()
+        .expect("target rows should contain requested revision")
+        .materialized_body_state();
+    let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())
+        .remove(request.document_id.as_str())
+        .ok_or_else(|| {
+            StoreError::new(format!(
+                "document {} has no body revision {}",
+                request.document_id, request.seq
+            ))
+        })?;
+    let target_state =
+        if replayed_target_state.materialized_text() == fallback_target_state.materialized_text() {
+            replayed_target_state
+        } else {
+            fallback_target_state
+        };
     body_persistence
         .write_current_state(&request.document_id, &target_state)
         .await?;
