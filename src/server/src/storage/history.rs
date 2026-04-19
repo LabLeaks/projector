@@ -20,6 +20,17 @@ use super::body_state::{
     BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryKind,
     RetainedBodyHistoryPayload,
 };
+use super::history_compaction::{
+    StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
+    history_compaction_response, replay_body_revision_run, resolve_history_compaction_policy,
+};
+use super::history_restore::{
+    build_restored_live_workspace_snapshot, diff_workspace_restore_changes,
+};
+use super::history_surgery::{
+    build_redaction_preview_lines, ensure_expected_history_match_set, purge_history_summary,
+    redact_history_summary, retained_purge_matches, retained_redaction_matches,
+};
 use super::provenance::{
     current_workspace_cursor_tx, file_append_workspace_event, file_workspace_cursor,
     insert_event_tx,
@@ -29,21 +40,10 @@ use projector_domain::{
     BootstrapSnapshot, ClearHistoryCompactionPolicyRequest, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
     DocumentPathRevision, GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy,
-    ManifestEntry, ManifestState, PreviewPurgeDocumentBodyHistoryRequest,
-    PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, ProvenanceEventKind,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
-    SetHistoryCompactionPolicyRequest,
+    ManifestEntry, PreviewPurgeDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryRequest,
+    ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
+    RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest,
 };
-
-const HISTORY_REDACTION_MARKER: &str = "[REDACTED]";
-const DEFAULT_HISTORY_COMPACTION_REVISIONS: usize = 100;
-const DEFAULT_HISTORY_COMPACTION_FREQUENCY: usize = 10;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct StoredHistoryCompactionPolicyOverride {
-    pub repo_relative_path: PathBuf,
-    pub policy: HistoryCompactionPolicy,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FileBodyRevision {
@@ -133,11 +133,7 @@ impl FileBodyRevision {
 
     pub(crate) fn redacted(&self, exact_text: &str) -> Result<Option<Self>, StoreError> {
         let redacted = FULL_TEXT_BODY_MODEL
-            .redact_history_payload(
-                &self.retained_history(),
-                exact_text,
-                HISTORY_REDACTION_MARKER,
-            )
+            .redact_history_payload(&self.retained_history(), exact_text, "[REDACTED]")
             .map_err(StoreError::new)?;
         Ok(redacted.map(|payload| {
             let mut redacted = self.clone();
@@ -177,291 +173,6 @@ impl FileBodyRevision {
             timestamp_ms: self.timestamp_ms,
         }))
     }
-}
-
-fn build_redaction_preview_lines(
-    original: &RetainedBodyHistoryPayload,
-    redacted: &RetainedBodyHistoryPayload,
-    exact_text: &str,
-) -> Vec<String> {
-    let mut lines = collect_redaction_preview_lines(original.materialized_text(), exact_text);
-    if !original.base_text().is_empty() {
-        lines.extend(collect_redaction_preview_lines(
-            original.base_text(),
-            exact_text,
-        ));
-    }
-    if lines.is_empty() {
-        let redacted_lines =
-            collect_redaction_preview_lines(redacted.materialized_text(), "[REDACTED]");
-        lines.extend(redacted_lines);
-    }
-    lines.truncate(8);
-    lines
-}
-
-fn collect_redaction_preview_lines(text: &str, needle: &str) -> Vec<String> {
-    text.lines()
-        .filter(|line| line.contains(needle))
-        .flat_map(|line| {
-            let trimmed = line.trim();
-            let redacted = trimmed.replace(needle, HISTORY_REDACTION_MARKER);
-            [format!("- {trimmed}"), format!("+ {redacted}")]
-        })
-        .collect()
-}
-
-pub(crate) fn retained_redaction_matches(
-    revisions: impl IntoIterator<Item = FileBodyRevision>,
-    document_id: &str,
-    exact_text: &str,
-    limit: usize,
-) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
-    let mut matches = revisions
-        .into_iter()
-        .filter(|revision| revision.document_id == document_id)
-        .map(|revision| revision.redaction_match(exact_text))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    if matches.len() > limit {
-        matches = matches.split_off(matches.len() - limit);
-    }
-    Ok(matches)
-}
-
-pub(crate) fn retained_purge_matches(
-    revisions: impl IntoIterator<Item = FileBodyRevision>,
-    document_id: &str,
-    limit: usize,
-) -> Vec<DocumentBodyPurgeMatch> {
-    let mut matches = revisions
-        .into_iter()
-        .filter(|revision| revision.document_id == document_id)
-        .filter(|revision| !revision.base_text.is_empty() || !revision.body_text.is_empty())
-        .map(|revision| DocumentBodyPurgeMatch {
-            seq: revision.seq,
-            actor_id: revision.actor_id,
-            document_id: revision.document_id,
-            checkpoint_anchor_seq: revision.checkpoint_anchor_seq,
-            history_kind: revision.history_kind.as_str().to_owned(),
-            body_len: revision.body_text.len(),
-            timestamp_ms: revision.timestamp_ms,
-        })
-        .collect::<Vec<_>>();
-    if matches.len() > limit {
-        matches = matches.split_off(matches.len() - limit);
-    }
-    matches
-}
-
-pub(crate) fn ensure_expected_history_match_set(
-    document_id: &str,
-    expected_match_seqs: Option<&Vec<u64>>,
-    matched_seqs: &[u64],
-    operation_name: &str,
-) -> Result<(), StoreError> {
-    let Some(expected_match_seqs) = expected_match_seqs else {
-        return Ok(());
-    };
-    if expected_match_seqs == matched_seqs {
-        return Ok(());
-    }
-    Err(StoreError::new(format!(
-        "document {} retained {} preview is stale: expected seqs {:?}, found {:?}",
-        document_id, operation_name, expected_match_seqs, matched_seqs
-    )))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ResolvedHistoryCompactionPolicy {
-    pub(crate) policy: HistoryCompactionPolicy,
-    pub(crate) source_kind: &'static str,
-    pub(crate) source_path: Option<PathBuf>,
-}
-
-fn default_history_compaction_policy() -> HistoryCompactionPolicy {
-    HistoryCompactionPolicy {
-        revisions: DEFAULT_HISTORY_COMPACTION_REVISIONS,
-        frequency: DEFAULT_HISTORY_COMPACTION_FREQUENCY,
-    }
-}
-
-pub(crate) fn resolve_history_compaction_policy(
-    overrides: &[StoredHistoryCompactionPolicyOverride],
-    repo_relative_path: &Path,
-) -> ResolvedHistoryCompactionPolicy {
-    let mut candidate = Some(repo_relative_path);
-    while let Some(path) = candidate {
-        if let Some(override_entry) = overrides
-            .iter()
-            .find(|entry| entry.repo_relative_path == path)
-        {
-            return ResolvedHistoryCompactionPolicy {
-                policy: override_entry.policy.clone(),
-                source_kind: if path == repo_relative_path {
-                    "path_override"
-                } else {
-                    "ancestor_override"
-                },
-                source_path: Some(path.to_path_buf()),
-            };
-        }
-        candidate = path.parent().filter(|parent| !parent.as_os_str().is_empty());
-    }
-
-    ResolvedHistoryCompactionPolicy {
-        policy: default_history_compaction_policy(),
-        source_kind: "default",
-        source_path: None,
-    }
-}
-
-pub(crate) fn history_compaction_response(
-    overrides: &[StoredHistoryCompactionPolicyOverride],
-    repo_relative_path: &Path,
-) -> GetHistoryCompactionPolicyResponse {
-    let resolved = resolve_history_compaction_policy(overrides, repo_relative_path);
-    GetHistoryCompactionPolicyResponse {
-        policy: resolved.policy,
-        source_kind: resolved.source_kind.to_owned(),
-        source_path: resolved
-            .source_path
-            .map(|path| path.display().to_string()),
-    }
-}
-
-fn replay_document_revision_states(
-    revisions: impl IntoIterator<Item = FileBodyRevision>,
-) -> Vec<(FileBodyRevision, CanonicalBodyState)> {
-    let mut states = HashMap::<String, CanonicalBodyState>::new();
-    let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
-    let mut replayed = Vec::new();
-    for revision in revisions {
-        let current_state = states.get(revision.document_id.as_str());
-        let previous_state = if revision.history_kind == RetainedBodyHistoryKind::YrsTextUpdateV1 {
-            current_state
-                .filter(|state| state.materialized_text() == revision.base_text)
-                .or_else(|| {
-                    revision
-                        .effective_checkpoint_anchor_seq()
-                        .and_then(|anchor_seq| {
-                            anchored_states.get(&(revision.document_id.clone(), anchor_seq))
-                        })
-                })
-        } else {
-            current_state
-        };
-        let next_state = revision.replayed_body_state(previous_state);
-        if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
-            anchored_states.insert(
-                (revision.document_id.clone(), anchor_seq),
-                next_state.clone(),
-            );
-        }
-        states.insert(revision.document_id.clone(), next_state.clone());
-        replayed.push((revision, next_state));
-    }
-    replayed
-}
-
-fn replay_previous_state<'a>(
-    revision: &FileBodyRevision,
-    states: &'a HashMap<String, CanonicalBodyState>,
-    anchored_states: &'a HashMap<(String, u64), CanonicalBodyState>,
-) -> Option<&'a CanonicalBodyState> {
-    let current_state = states.get(revision.document_id.as_str());
-    if revision.history_kind != RetainedBodyHistoryKind::YrsTextUpdateV1 {
-        return current_state;
-    }
-    current_state
-        .filter(|state| state.materialized_text() == revision.base_text)
-        .or_else(|| {
-            revision
-                .effective_checkpoint_anchor_seq()
-                .and_then(|anchor_seq| {
-                    anchored_states.get(&(revision.document_id.clone(), anchor_seq))
-                })
-        })
-}
-
-pub(crate) fn compact_document_body_revisions(
-    revisions: &[FileBodyRevision],
-    document_id: &str,
-    policy: &HistoryCompactionPolicy,
-) -> Result<Vec<FileBodyRevision>, StoreError> {
-    let document_revisions = revisions
-        .iter()
-        .filter(|revision| revision.document_id == document_id)
-        .cloned()
-        .collect::<Vec<_>>();
-    if document_revisions.len() <= policy.revisions {
-        return Ok(document_revisions);
-    }
-
-    let older_len = document_revisions.len() - policy.revisions;
-    let replayed = replay_document_revision_states(document_revisions);
-    let mut compacted = Vec::new();
-    let mut previous_kept_text = None::<String>;
-
-    for (index, (revision, state)) in replayed.into_iter().enumerate() {
-        let keep = index >= older_len || index % policy.frequency == 0;
-        if !keep {
-            continue;
-        }
-
-        let base_text = previous_kept_text
-            .clone()
-            .unwrap_or_else(|| revision.base_text.clone());
-        let payload = FULL_TEXT_BODY_MODEL.checkpoint_history(base_text, state.materialized_text());
-        let compacted_revision = FileBodyRevision {
-            seq: revision.seq,
-            workspace_cursor: revision.workspace_cursor,
-            actor_id: revision.actor_id,
-            document_id: revision.document_id,
-            checkpoint_anchor_seq: Some(revision.seq),
-            history_kind: payload.kind(),
-            base_text: payload.base_text().to_owned(),
-            body_text: payload.storage_payload().to_owned(),
-            conflicted: payload.conflicted(),
-            timestamp_ms: revision.timestamp_ms,
-        };
-        previous_kept_text = Some(state.materialized_text().to_owned());
-        compacted.push(compacted_revision);
-    }
-
-    Ok(compacted)
-}
-
-pub(crate) fn replay_body_revision_run(
-    revisions: impl IntoIterator<Item = FileBodyRevision>,
-) -> HashMap<String, CanonicalBodyState> {
-    let mut states = HashMap::<String, CanonicalBodyState>::new();
-    let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
-    for revision in revisions {
-        let previous_state = replay_previous_state(&revision, &states, &anchored_states);
-        let next_state = revision.replayed_body_state(previous_state);
-        if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
-            anchored_states.insert(
-                (revision.document_id.clone(), anchor_seq),
-                next_state.clone(),
-            );
-        }
-        states.insert(revision.document_id.clone(), next_state);
-    }
-    states
-}
-
-pub(crate) fn latest_checkpoint_anchor_seq(
-    revisions: impl IntoIterator<Item = FileBodyRevision>,
-    document_id: &str,
-) -> Option<u64> {
-    revisions
-        .into_iter()
-        .filter(|revision| revision.document_id == document_id)
-        .filter_map(|revision| revision.effective_checkpoint_anchor_seq())
-        .last()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -636,8 +347,7 @@ pub(crate) fn file_enforce_history_compaction_policy(
         &repo_relative_path,
     );
     let revisions = file_read_body_revisions(state_dir, workspace_id)?;
-    let compacted =
-        compact_document_body_revisions(&revisions, document_id, &resolved.policy)?;
+    let compacted = compact_document_body_revisions(&revisions, document_id, &resolved.policy)?;
     let original = revisions
         .iter()
         .filter(|revision| revision.document_id == document_id)
@@ -1381,8 +1091,7 @@ pub(crate) async fn postgres_enforce_history_compaction_policy(
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
-    let compacted =
-        compact_document_body_revisions(&original, document_id, &resolved.policy)?;
+    let compacted = compact_document_body_revisions(&original, document_id, &resolved.policy)?;
     if compacted == original {
         return Ok(());
     }
@@ -1604,34 +1313,6 @@ pub(crate) async fn postgres_redact_document_body_history(
     )
     .await?;
     Ok(())
-}
-
-fn purge_history_summary(
-    document_id: &str,
-    mount_relative_path: Option<&str>,
-    relative_path: Option<&str>,
-) -> String {
-    match (mount_relative_path, relative_path) {
-        (Some(mount), Some(relative)) if !relative.is_empty() => {
-            format!("purged retained body history for {mount}/{relative}")
-        }
-        (Some(mount), _) => format!("purged retained body history for {mount}"),
-        _ => format!("purged retained body history for document {document_id}"),
-    }
-}
-
-fn redact_history_summary(
-    document_id: &str,
-    mount_relative_path: Option<&str>,
-    relative_path: Option<&str>,
-) -> String {
-    match (mount_relative_path, relative_path) {
-        (Some(mount), Some(relative)) if !relative.is_empty() => {
-            format!("redacted retained body history for {mount}/{relative}")
-        }
-        (Some(mount), _) => format!("redacted retained body history for {mount}"),
-        _ => format!("redacted retained body history for document {document_id}"),
-    }
 }
 
 pub(crate) async fn postgres_list_path_revisions(
@@ -1913,240 +1594,6 @@ async fn postgres_current_workspace_snapshot(
     snapshot_from_current_rows(rows, |_| Ok(DocumentKind::Text))
 }
 
-#[derive(Clone)]
-struct WorkspaceRestoreChange {
-    document_id: DocumentId,
-    kind: ProvenanceEventKind,
-    summary: String,
-    path: WorkspaceRestorePathChange,
-    body: Option<WorkspaceRestoreBodyChange>,
-}
-
-#[derive(Clone)]
-struct WorkspaceRestorePathChange {
-    mount_path: String,
-    relative_path: String,
-    deleted: bool,
-    event_kind: String,
-}
-
-#[derive(Clone)]
-struct WorkspaceRestoreBodyChange {
-    base_text: String,
-    body_text: String,
-}
-
-fn build_restored_live_workspace_snapshot(
-    current: &BootstrapSnapshot,
-    target: &BootstrapSnapshot,
-) -> BootstrapSnapshot {
-    let current_entries = current
-        .manifest
-        .entries
-        .iter()
-        .cloned()
-        .map(|entry| (entry.document_id.as_str().to_owned(), entry))
-        .collect::<HashMap<_, _>>();
-    let target_entries = target
-        .manifest
-        .entries
-        .iter()
-        .cloned()
-        .map(|entry| (entry.document_id.as_str().to_owned(), entry))
-        .collect::<HashMap<_, _>>();
-
-    let mut entries = current_entries.clone();
-    for (document_id, target_entry) in &target_entries {
-        if !target_entry.deleted {
-            entries.insert(document_id.clone(), target_entry.clone());
-            continue;
-        }
-        if let Some(current_entry) = entries.get_mut(document_id) {
-            current_entry.deleted = true;
-        } else {
-            entries.insert(document_id.clone(), target_entry.clone());
-        }
-    }
-    for (document_id, current_entry) in &current_entries {
-        if !target_entries.contains_key(document_id) && !current_entry.deleted {
-            let mut deleted_entry = current_entry.clone();
-            deleted_entry.deleted = true;
-            entries.insert(document_id.clone(), deleted_entry);
-        }
-    }
-
-    let mut manifest_entries = entries.into_values().collect::<Vec<_>>();
-    manifest_entries.sort_by(|left, right| {
-        left.mount_relative_path
-            .cmp(&right.mount_relative_path)
-            .then_with(|| left.relative_path.cmp(&right.relative_path))
-            .then_with(|| left.document_id.as_str().cmp(right.document_id.as_str()))
-    });
-
-    let mut bodies = target.bodies.clone();
-    bodies.sort_by(|left, right| left.document_id.as_str().cmp(right.document_id.as_str()));
-
-    BootstrapSnapshot {
-        manifest: ManifestState {
-            entries: manifest_entries,
-        },
-        bodies,
-    }
-}
-
-fn diff_workspace_restore_changes(
-    current: &BootstrapSnapshot,
-    restored: &BootstrapSnapshot,
-    target_cursor: u64,
-) -> Vec<WorkspaceRestoreChange> {
-    let current_entries = current
-        .manifest
-        .entries
-        .iter()
-        .map(|entry| (entry.document_id.as_str().to_owned(), entry))
-        .collect::<HashMap<_, _>>();
-    let restored_entries = restored
-        .manifest
-        .entries
-        .iter()
-        .map(|entry| (entry.document_id.as_str().to_owned(), entry))
-        .collect::<HashMap<_, _>>();
-    let current_bodies = current
-        .bodies
-        .iter()
-        .map(|body| (body.document_id.as_str().to_owned(), body.text.as_str()))
-        .collect::<HashMap<_, _>>();
-    let restored_bodies = restored
-        .bodies
-        .iter()
-        .map(|body| (body.document_id.as_str().to_owned(), body.text.as_str()))
-        .collect::<HashMap<_, _>>();
-
-    let mut document_ids = current_entries
-        .keys()
-        .chain(restored_entries.keys())
-        .cloned()
-        .collect::<Vec<_>>();
-    document_ids.sort();
-    document_ids.dedup();
-
-    let mut changes = Vec::new();
-    for document_id in document_ids {
-        let Some(restored_entry) = restored_entries.get(&document_id) else {
-            continue;
-        };
-        let current_entry = current_entries.get(&document_id).copied();
-        let current_body = current_bodies
-            .get(&document_id)
-            .copied()
-            .unwrap_or_default();
-        let restored_body = restored_bodies
-            .get(&document_id)
-            .copied()
-            .unwrap_or_default();
-
-        let current_live = current_entry.map(|entry| !entry.deleted).unwrap_or(false);
-        let restored_live = !restored_entry.deleted;
-        let path_changed = current_entry
-            .map(|entry| {
-                entry.mount_relative_path != restored_entry.mount_relative_path
-                    || entry.relative_path != restored_entry.relative_path
-            })
-            .unwrap_or(restored_live);
-        let body_changed = current_body != restored_body;
-
-        let Some((kind, summary, path_event_kind)) = restore_change_metadata(
-            current_entry,
-            restored_entry,
-            current_live,
-            restored_live,
-            path_changed,
-            body_changed,
-            target_cursor,
-        ) else {
-            continue;
-        };
-
-        let body = if restored_live && body_changed {
-            Some(WorkspaceRestoreBodyChange {
-                base_text: current_body.to_owned(),
-                body_text: restored_body.to_owned(),
-            })
-        } else {
-            None
-        };
-
-        changes.push(WorkspaceRestoreChange {
-            document_id: restored_entry.document_id.clone(),
-            kind,
-            summary,
-            path: WorkspaceRestorePathChange {
-                mount_path: restored_entry.mount_relative_path.display().to_string(),
-                relative_path: restored_entry.relative_path.display().to_string(),
-                deleted: restored_entry.deleted,
-                event_kind: path_event_kind,
-            },
-            body,
-        });
-    }
-
-    changes
-}
-
-fn restore_change_metadata(
-    current_entry: Option<&ManifestEntry>,
-    restored_entry: &ManifestEntry,
-    current_live: bool,
-    restored_live: bool,
-    path_changed: bool,
-    body_changed: bool,
-    target_cursor: u64,
-) -> Option<(ProvenanceEventKind, String, String)> {
-    let path_display = format!(
-        "{}/{}",
-        restored_entry.mount_relative_path.display(),
-        restored_entry.relative_path.display()
-    );
-    if current_live && !restored_live {
-        return Some((
-            ProvenanceEventKind::DocumentDeleted,
-            format!(
-                "workspace restore to cursor {target_cursor} removed text document from live workspace at {path_display}"
-            ),
-            "document_deleted".to_owned(),
-        ));
-    }
-    if !current_live && restored_live {
-        return Some((
-            ProvenanceEventKind::DocumentCreated,
-            format!(
-                "workspace restore to cursor {target_cursor} restored text document at {path_display}"
-            ),
-            "workspace_restored".to_owned(),
-        ));
-    }
-    if current_live && restored_live && path_changed {
-        return Some((
-            ProvenanceEventKind::DocumentMoved,
-            format!(
-                "workspace restore to cursor {target_cursor} moved text document to {path_display}"
-            ),
-            "workspace_restored".to_owned(),
-        ));
-    }
-    if current_live && restored_live && body_changed {
-        return Some((
-            ProvenanceEventKind::DocumentUpdated,
-            format!(
-                "workspace restore to cursor {target_cursor} restored text document body at {path_display}"
-            ),
-            "workspace_restored".to_owned(),
-        ));
-    }
-    let _ = current_entry;
-    None
-}
-
 fn current_time_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2179,12 +1626,11 @@ mod tests {
                 .retained_history()
                 .clone()
         };
-        let checkpoint_anchor_seq =
-            if payload.kind() == RetainedBodyHistoryKind::YrsTextUpdateV1 {
-                latest_checkpoint_anchor_seq(revisions.clone(), document_id)
-            } else {
-                Some(seq)
-            };
+        let checkpoint_anchor_seq = if payload.kind() == RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            super::history_compaction::latest_checkpoint_anchor_seq(revisions.clone(), document_id)
+        } else {
+            Some(seq)
+        };
         revisions.push(FileBodyRevision::from_retained_history(
             seq,
             seq,

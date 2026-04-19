@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use projector_domain::{BootstrapSnapshot, DocumentId, DocumentKind, ManifestEntry, ManifestState};
 
 use crate::storage::body_projection::snapshot_from_manifest_entries;
-use crate::storage::history::replay_body_revision_run;
+use crate::storage::history_compaction::replay_body_revision_run;
 use crate::storage::sqlite::history::{read_body_revisions, read_path_history};
 use crate::storage::sqlite::state::effective_workspace_cursor;
 use crate::storage::{StoreError, history::FilePathRevision};

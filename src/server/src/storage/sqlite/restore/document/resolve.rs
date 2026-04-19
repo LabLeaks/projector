@@ -7,11 +7,10 @@ use std::path::PathBuf;
 
 use projector_domain::{DocumentId, RestoreDocumentBodyRevisionRequest};
 
+use crate::storage::history_compaction::replay_body_revision_run;
 use crate::storage::sqlite::history::read_body_revisions;
 use crate::storage::sqlite::state::load_required_workspace_state;
-use crate::storage::{
-    StoreError, body_state::CanonicalBodyState, history::replay_body_revision_run,
-};
+use crate::storage::{StoreError, body_state::CanonicalBodyState};
 
 pub(super) struct DocumentRestoreResolution {
     pub(super) state: crate::storage::sqlite::state::SqliteWorkspaceState,

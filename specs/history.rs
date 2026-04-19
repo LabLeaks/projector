@@ -1,6 +1,6 @@
 /**
 @spec PROJECTOR.HISTORY.DOCUMENT_BODY_HISTORY
-Projector retains append-only document body revisions with base text, resulting body text, and conflict metadata instead of only current body truth.
+Projector retains append-only document body revisions with decodable retained body payload and conflict metadata instead of only current body truth.
 
 @spec PROJECTOR.HISTORY.RESTORABLE_WORKSPACE_STATE
 Projector can reconstruct workspace state at an earlier workspace cursor as an emergency backstop rather than only retaining current state plus audit events.
@@ -18,10 +18,10 @@ When `projector restore <repo-relative-path>` runs in an interactive terminal, s
 `projector restore --seq <seq> <repo-relative-path>` previews the selected document body restoration without mutating workspace state, and adding `--confirm` applies that selected restore non-interactively.
 
 @spec PROJECTOR.HISTORY.DOCUMENT_RESTORE_REVIVES_DELETED_PATH
-`projector restore <repo-relative-path> --confirm` can target a document at its last known deleted path and revive it there when that path is still free.
+Interactive `projector restore <repo-relative-path>` can target a document at its last known deleted path and revive it there when that path is still free.
 
 @spec PROJECTOR.HISTORY.DOCUMENT_RESTORE_HISTORICAL_MOVED_PATH
-`projector restore <repo-relative-path> --confirm` can target an older moved path from document path history and restore the document back onto that historical path when it is free.
+Interactive `projector restore <repo-relative-path>` can target an older moved path from document path history and restore the document back onto that historical path when it is free.
 
 @spec PROJECTOR.HISTORY.MANIFEST_PATH_HISTORY
 Projector retains append-only document path history for create, move, and delete transitions rather than only current-path truth.
@@ -30,19 +30,19 @@ Projector retains append-only document path history for create, move, and delete
 Projector renders readable document history as retained text snapshots and diffs over retained body checkpoints instead of exposing raw CRDT update history directly.
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY
-Projector can attach a path-scoped history compaction policy that keeps a recent window of document body history at full fidelity and older document body history as sparser retained checkpoints.
+Projector can attach a path-scoped history compaction policy to one file or folder path.
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY_INHERITANCE
 Projector resolves the effective history compaction policy for one file from the nearest configured file or ancestor-folder policy override.
 
 @spec PROJECTOR.HISTORY.CONTENT_REDACTION
-Projector can rewrite one document's retained checkpoint and update history by repo-relative path to replace exact matched text with `[REDACTED]` while preserving the document's readable retained history.
+Projector can rewrite one document's retained body history by repo-relative path to replace exact matched text with `[REDACTED]` while preserving the document's readable retained history.
 
 @spec PROJECTOR.HISTORY.DOCUMENT_HISTORY_PURGE
 Projector can purge one document's retained historical body content by path without deleting the surrounding non-secret audit record that history surgery happened.
 
 @spec PROJECTOR.HISTORY.DESTRUCTIVE_HISTORY_AUDIT
-Projector records destructive document-history surgery durably without retaining the removed sensitive content in its audit trail.
+Projector records destructive document-history surgery without retaining the removed sensitive content in its audit trail.
 
 @spec PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_BODY_REVISIONS
 `POST /history/body/list` returns append-only body revisions for a document with base text, resulting body text, conflict metadata, and self-describing retained-history kind and checkpoint-anchor metadata.
@@ -75,7 +75,7 @@ Projector records destructive document-history surgery durably without retaining
 `POST /history/body/redact` can require the exact retained revision seq set returned by a prior redaction preview and rejects the rewrite if the matching retained revision set has changed since that preview.
 
 @spec PROJECTOR.SERVER.HISTORY.REDACTS_RETAINED_BODY_HISTORY
-`POST /history/body/redact` can rewrite one document's retained checkpoints and update history for a document id by replacing exact matched text with `[REDACTED]` while preserving readable retained history.
+`POST /history/body/redact` can rewrite one document's retained body history for a document id by replacing exact matched text with `[REDACTED]` while preserving readable retained history.
 
 @spec PROJECTOR.SERVER.HISTORY.PREVIEWS_PURGE_MATCHES
 `POST /history/body/purge/preview` returns the retained revisions whose body content would be cleared by one purge request so clients can preview purge impact without deriving clearable rows from raw history rows themselves.
@@ -87,7 +87,7 @@ Projector records destructive document-history surgery durably without retaining
 `POST /history/body/purge` can purge one document's retained historical body content for a document id without deleting the surrounding non-secret audit record that history surgery happened.
 
 @spec PROJECTOR.SERVER.HISTORY.RECORDS_DESTRUCTIVE_HISTORY_SURGERY
-`POST /history/body/purge` records destructive document-history surgery durably without retaining the removed historical body content in the audit record.
+`POST /history/body/purge` records destructive document-history surgery without retaining the removed historical body content in the audit record.
 
 @spec PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
 Server history storage enforces the effective path-scoped history compaction policy during retained body-history writes by keeping dense recent body history and rewriting older retained history as sparser checkpoints without affecting live current document body state.

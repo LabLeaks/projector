@@ -614,11 +614,7 @@ impl BodyStateModel for FullTextBodyModel {
                 .expect("base text should convert into a yrs checkpoint")
                 .update_to_text_v1(
                     &materialized_text,
-                    yrs_operation_client_id(
-                        "projector-history",
-                        &base_text,
-                        &materialized_text,
-                    ),
+                    yrs_operation_client_id("projector-history", &base_text, &materialized_text),
                 )
                 .expect("next text should produce yrs incremental updates");
             RetainedBodyHistoryPayload::yrs_text_update_v1(
@@ -961,7 +957,8 @@ impl BodyConvergenceEngine for YrsConvergenceBodyEngine {
                 deterministic_concurrent_text_union(base_text, current_text, incoming_text);
             let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(&fallback_text);
             return BodyConvergenceResult {
-                retained_history: FULL_TEXT_BODY_MODEL.checkpoint_history(base_text, &fallback_text),
+                retained_history: FULL_TEXT_BODY_MODEL
+                    .checkpoint_history(base_text, &fallback_text),
                 canonical_state,
                 concurrent,
             };

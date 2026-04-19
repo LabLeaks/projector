@@ -5,6 +5,7 @@ Connection-oriented CLI proof for connect, disconnect, deploy, and doctor flows 
 // @fileimplements PROJECTOR.TESTS.CONNECTION_CLI
 use super::*;
 
+// @verifies PROJECTOR.SERVER.HOSTING.BYO_SERVER
 #[test]
 fn connect_saves_and_reports_machine_global_server_profiles() {
     let repo = temp_repo("connect-profiles");

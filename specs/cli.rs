@@ -24,7 +24,7 @@ If no server profiles are connected, `projector add <path>` rejects the add and 
 Running `projector get` without an id opens a terminal browser for a chosen connected server profile's available remote sync entries, showing entry id, source repo metadata, and content preview before materialization.
 
 @spec PROJECTOR.CLI.STATUS.REPORTS_CONFLICTED_TEXT_DOCUMENTS
-When materialized text files contain projector conflict markers from a concurrent merge, `projector status` reports the conflicted file count and repo-relative conflicted paths.
+When materialized text files contain projector conflict markers, `projector status` reports the conflicted file count and repo-relative conflicted paths.
 
 @spec PROJECTOR.CLI.LOG.RENDERS_LOCAL_EVENTS
 `projector log` renders the local projector event log when local bootstrap events exist.
@@ -48,7 +48,7 @@ When `projector redact <exact-text> <repo-relative-path>` runs in an interactive
 When `projector redact <exact-text> <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector opens a terminal browser over the matching retained revisions before applying.
 
 @spec PROJECTOR.CLI.PURGE.PREVIEWS_AND_APPLIES_RETAINED_HISTORY_SURGERY
-`projector purge <repo-relative-path>` previews how many retained revisions for the bound live document would be cleared, and adding `--confirm` clears the retained body content while leaving live current document state unchanged.
+`projector purge <repo-relative-path>` previews how many retained revisions for the bound live document would be cleared, and adding `--confirm` clears the retained body content.
 
 @spec PROJECTOR.CLI.PURGE.INTERACTIVE_CONFIRMATION
 When `projector purge <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector previews the retained revisions that would be cleared and can apply the purge after terminal confirmation.
@@ -75,7 +75,7 @@ When `projector purge <repo-relative-path>` runs in an interactive terminal with
 `projector disconnect <profile>` warns with the repo-local paths that will become desynced and then removes that machine-global connected server profile when confirmed.
 
 @spec PROJECTOR.CLI.DEPLOY.GUIDED_REMOTE_SETUP
-`projector deploy` uses an interactive flow to configure and provision a remote self-host target, defaulting to a sysbox-isolated container that runs one projector-server binary against one SQLite database file and leaving Postgres-oriented targets to advanced flows.
+`projector deploy` uses an interactive flow to configure and provision a remote self-host target, defaulting to a sysbox-isolated container that runs one projector-server binary against one SQLite database file.
 
 @spec PROJECTOR.CLI.DEPLOY.USES_SYSBOX_ISOLATION
 `projector deploy` provisions the default BYO server inside a sysbox-backed container rather than launching projector-server directly as an unmanaged host process.

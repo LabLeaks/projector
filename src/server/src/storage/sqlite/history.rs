@@ -8,12 +8,20 @@ use projector_domain::{
     DocumentBodyRevision, DocumentId, DocumentPathRevision, GetHistoryCompactionPolicyResponse,
     HistoryCompactionPolicy, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, ProvenanceEventKind,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest, SetHistoryCompactionPolicyRequest,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
+    SetHistoryCompactionPolicyRequest,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::super::StoreError;
 pub(super) use super::super::history::{FileBodyRevision, FilePathRevision};
+use super::super::history_compaction::{
+    StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
+    history_compaction_response, resolve_history_compaction_policy,
+};
+use super::super::history_surgery::{
+    ensure_expected_history_match_set, retained_purge_matches, retained_redaction_matches,
+};
 use super::state::{
     append_event, decode_json, effective_workspace_cursor, encode_json,
     load_required_workspace_state, make_event,
@@ -22,7 +30,7 @@ use super::state::{
 fn read_history_compaction_policies(
     connection: &Connection,
     workspace_id: &str,
-) -> Result<Vec<super::super::history::StoredHistoryCompactionPolicyOverride>, StoreError> {
+) -> Result<Vec<StoredHistoryCompactionPolicyOverride>, StoreError> {
     let mut stmt = connection.prepare(
         "select repo_relative_path, revisions, frequency \
          from history_compaction_policies \
@@ -30,7 +38,7 @@ fn read_history_compaction_policies(
          order by repo_relative_path asc",
     )?;
     let rows = stmt.query_map(params![workspace_id], |row| {
-        Ok(super::super::history::StoredHistoryCompactionPolicyOverride {
+        Ok(StoredHistoryCompactionPolicyOverride {
             repo_relative_path: std::path::PathBuf::from(row.get::<_, String>(0)?),
             policy: HistoryCompactionPolicy {
                 revisions: row.get::<_, i64>(1)? as usize,
@@ -38,7 +46,8 @@ fn read_history_compaction_policies(
             },
         })
     })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StoreError::from)
 }
 
 pub(super) fn get_history_compaction_policy(
@@ -46,7 +55,7 @@ pub(super) fn get_history_compaction_policy(
     workspace_id: &str,
     repo_relative_path: &str,
 ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
-    Ok(super::super::history::history_compaction_response(
+    Ok(history_compaction_response(
         &read_history_compaction_policies(connection, workspace_id)?,
         std::path::Path::new(repo_relative_path),
     ))
@@ -172,7 +181,7 @@ pub(super) fn preview_redact_document_body_history(
     connection: &Connection,
     request: &PreviewRedactDocumentBodyHistoryRequest,
 ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
-    let matches = super::super::history::retained_redaction_matches(
+    let matches = retained_redaction_matches(
         read_body_revisions(connection, &request.workspace_id)?,
         &request.document_id,
         &request.exact_text,
@@ -191,7 +200,7 @@ pub(super) fn preview_purge_document_body_history(
     connection: &Connection,
     request: &PreviewPurgeDocumentBodyHistoryRequest,
 ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
-    let matches = super::super::history::retained_purge_matches(
+    let matches = retained_purge_matches(
         read_body_revisions(connection, &request.workspace_id)?,
         &request.document_id,
         request.limit,
@@ -221,7 +230,7 @@ pub(crate) fn enforce_history_compaction_policy(
         return Ok(());
     };
     let repo_relative_path = entry.mount_relative_path.join(&entry.relative_path);
-    let resolved = super::super::history::resolve_history_compaction_policy(
+    let resolved = resolve_history_compaction_policy(
         &read_history_compaction_policies(connection, workspace_id)?,
         &repo_relative_path,
     );
@@ -229,11 +238,7 @@ pub(crate) fn enforce_history_compaction_policy(
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
         .collect::<Vec<_>>();
-    let compacted = super::super::history::compact_document_body_revisions(
-        &original,
-        document_id,
-        &resolved.policy,
-    )?;
+    let compacted = compact_document_body_revisions(&original, document_id, &resolved.policy)?;
     if compacted == original {
         return Ok(());
     }
@@ -328,7 +333,7 @@ pub(super) fn purge_document_body_history(
             request.document_id, request.workspace_id
         )));
     }
-    super::super::history::ensure_expected_history_match_set(
+    ensure_expected_history_match_set(
         &request.document_id,
         request.expected_match_seqs.as_ref(),
         &matched_seqs,
@@ -402,7 +407,7 @@ pub(super) fn redact_document_body_history(
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
-    super::super::history::ensure_expected_history_match_set(
+    ensure_expected_history_match_set(
         &request.document_id,
         request.expected_match_seqs.as_ref(),
         &matched_seqs,

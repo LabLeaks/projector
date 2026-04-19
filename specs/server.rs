@@ -4,7 +4,7 @@
 Authenticated workspace members can be granted at least `read_only` and `read_write` roles, with write endpoints rejecting read-only actors.
 
 @spec PROJECTOR.SERVER.HOSTING.BYO_SERVER
-Single-user projector workflows attach repos through one or more named user-supplied server profiles rather than through a required embedded local server mode.
+Single-user projector workflows are organized around one or more named user-supplied server profiles rather than a required embedded local server mode.
 
 @spec PROJECTOR.SERVER.HOSTING.SQLITE_DEFAULT
 For the single-user BYO deploy path, `projector deploy` defaults the remote server to one projector-server binary backed by one SQLite database file.

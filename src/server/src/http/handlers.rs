@@ -12,9 +12,9 @@ use axum::routing::post;
 use axum::{Json, Router};
 use projector_domain::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, ChangesSinceRequest,
-    ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
-    ClearHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyResponse,
-    GetHistoryCompactionPolicyRequest, GetHistoryCompactionPolicyResponse,
+    ChangesSinceResponse, ClearHistoryCompactionPolicyRequest,
+    ClearHistoryCompactionPolicyResponse, CreateDocumentRequest, CreateDocumentResponse,
+    DeleteDocumentRequest, GetHistoryCompactionPolicyRequest, GetHistoryCompactionPolicyResponse,
     ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
     ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
     ListSyncEntriesResponse, MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
@@ -57,7 +57,10 @@ pub(super) fn app(store: Arc<dyn WorkspaceStore>) -> Router {
         .route("/history/body/purge", post(purge_body_history))
         .route("/history/compact/get", post(get_history_compaction_policy))
         .route("/history/compact/set", post(set_history_compaction_policy))
-        .route("/history/compact/clear", post(clear_history_compaction_policy))
+        .route(
+            "/history/compact/clear",
+            post(clear_history_compaction_policy),
+        )
         .route("/history/path/list", post(list_path_revisions))
         .route(
             "/history/workspace/reconstruct",

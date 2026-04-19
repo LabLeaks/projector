@@ -21,7 +21,8 @@ use super::body_state::{
     BodyConvergenceEngine, BodyStateModel, CanonicalBodyState, FULL_TEXT_BODY_MODEL,
     RetainedBodyHistoryKind, RetainedBodyHistoryPayload, YrsConvergenceBodyEngine,
 };
-use super::history::{file_read_body_revisions, replay_body_revision_run};
+use super::history::file_read_body_revisions;
+use super::history_compaction::replay_body_revision_run;
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;
 

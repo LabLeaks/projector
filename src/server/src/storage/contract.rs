@@ -7,14 +7,14 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
-    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
-    GetHistoryCompactionPolicyResponse, MoveDocumentRequest,
-    PreviewPurgeDocumentBodyHistoryRequest,
+    BootstrapSnapshot, ClearHistoryCompactionPolicyRequest, CreateDocumentRequest,
+    DeleteDocumentRequest, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch,
+    DocumentBodyRevision, DocumentId, DocumentPathRevision, GetHistoryCompactionPolicyResponse,
+    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
-    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
-    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest, UpdateDocumentRequest,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest,
+    SyncEntryKind, SyncEntrySummary, UpdateDocumentRequest,
 };
 
 use super::StoreError;

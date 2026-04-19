@@ -36,11 +36,15 @@ pub(crate) fn run_compact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let mut transport = HttpTransport::new(format!("http://{server_addr}"));
 
     if compact_args.inherit {
-        let removed =
-            transport.clear_history_compaction_policy(&binding, &compact_args.repo_relative_path)?;
+        let removed = transport
+            .clear_history_compaction_policy(&binding, &compact_args.repo_relative_path)?;
         println!(
             "compact_policy: {}",
-            if removed { "inherited" } else { "already_inherited" }
+            if removed {
+                "inherited"
+            } else {
+                "already_inherited"
+            }
         );
         print_effective_policy(&compact_args.repo_relative_path, &mut transport, &binding)?;
         return Ok(());

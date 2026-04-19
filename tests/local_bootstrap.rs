@@ -34,24 +34,24 @@ use projector_runtime::{
     Transport, derive_sync_targets,
 };
 
-#[path = "local_bootstrap/history_server.rs"]
-mod history_server;
-#[path = "local_bootstrap/history_cli.rs"]
-mod history_cli;
-#[path = "local_bootstrap/history_surgery.rs"]
-mod history_surgery;
 #[path = "local_bootstrap/compact_cli.rs"]
 mod compact_cli;
+#[path = "local_bootstrap/connection_cli.rs"]
+mod connection_cli;
+#[path = "local_bootstrap/history_cli.rs"]
+mod history_cli;
+#[path = "local_bootstrap/history_server.rs"]
+mod history_server;
+#[path = "local_bootstrap/history_surgery.rs"]
+mod history_surgery;
+#[path = "local_bootstrap/observability_cli.rs"]
+mod observability_cli;
 #[path = "local_bootstrap/restore_cli.rs"]
 mod restore_cli;
 #[path = "local_bootstrap/sync_bootstrap.rs"]
 mod sync_bootstrap;
-#[path = "local_bootstrap/connection_cli.rs"]
-mod connection_cli;
 #[path = "local_bootstrap/sync_entry_cli.rs"]
 mod sync_entry_cli;
-#[path = "local_bootstrap/observability_cli.rs"]
-mod observability_cli;
 
 fn temp_repo(name: &str) -> PathBuf {
     let unique = SystemTime::now()

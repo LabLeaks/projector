@@ -276,6 +276,19 @@ fn server_can_redact_exact_text_in_retained_document_body_history() {
                 .iter()
                 .any(|line| line.contains("[REDACTED]"))
     }));
+
+    let events = transport.provenance(&binding, 20).expect("list provenance");
+    assert!(events.iter().any(|event| {
+        event.kind == projector_domain::ProvenanceEventKind::DocumentHistoryRedacted
+            && event.summary.contains("redacted retained body history")
+            && !event.summary.contains(secret)
+    }));
+}
+
+// @verifies PROJECTOR.SERVER.HISTORY.RECORDS_DESTRUCTIVE_HISTORY_SURGERY
+#[test]
+fn server_records_a_non_secret_audit_event_for_history_redaction() {
+    server_can_redact_exact_text_in_retained_document_body_history();
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.PREVIEWS_REDACTION_MATCHES

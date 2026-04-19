@@ -244,17 +244,27 @@ fn server_enforces_history_compaction_policy_on_retained_body_history() {
         .expect("sync entry exists")
         .workspace_id
         .clone();
-    let document_id =
-        resolve_document_by_historical_path(&addr, workspace_id.as_str(), "private", "compacted.html");
+    let document_id = resolve_document_by_historical_path(
+        &addr,
+        workspace_id.as_str(),
+        "private",
+        "compacted.html",
+    );
     let revisions = list_body_revisions(&addr, workspace_id.as_str(), &document_id, 20);
-    let retained_seqs = revisions.iter().map(|revision| revision.seq).collect::<Vec<_>>();
+    let retained_seqs = revisions
+        .iter()
+        .map(|revision| revision.seq)
+        .collect::<Vec<_>>();
     assert!(retained_seqs.len() < 6);
     assert_eq!(retained_seqs.first().copied(), Some(1));
     assert_eq!(retained_seqs.last(), Some(&6));
     assert!(retained_seqs.contains(&5));
     assert_eq!(revisions[0].history_kind, "yrs_text_checkpoint_v1");
     assert_eq!(
-        revisions.last().expect("latest revision retained").body_text,
+        revisions
+            .last()
+            .expect("latest revision retained")
+            .body_text,
         "<p>revision six</p>\n"
     );
 }

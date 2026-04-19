@@ -56,6 +56,15 @@ fn assert_projector_redact_rewrites_history() {
     let after = run_projector(&repo, &["history", "private/briefs/cli-redact.html"]);
     assert!(!after.contains(secret));
     assert!(after.contains("[REDACTED]"));
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let events = transport.provenance(&binding, 20).expect("list provenance");
+    assert!(events.iter().any(|event| {
+        event.kind == projector_domain::ProvenanceEventKind::DocumentHistoryRedacted
+            && event.summary.contains("redacted retained body history")
+            && !event.summary.contains(secret)
+    }));
 }
 
 // @verifies PROJECTOR.CLI.REDACT.PREVIEWS_AND_APPLIES_EXACT_TEXT_REWRITE
@@ -68,6 +77,12 @@ fn projector_redact_previews_then_applies_exact_text_history_rewrite() {
 #[test]
 fn history_content_redaction_rewrites_exact_text_by_path() {
     assert_projector_redact_rewrites_history();
+}
+
+// @verifies PROJECTOR.HISTORY.DESTRUCTIVE_HISTORY_AUDIT
+#[test]
+fn history_redaction_records_non_secret_audit_trail() {
+    history_content_redaction_rewrites_exact_text_by_path();
 }
 
 fn assert_projector_purge_clears_retained_history_and_records_audit() {
