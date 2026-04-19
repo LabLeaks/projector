@@ -3467,6 +3467,77 @@ fn server_lists_document_body_revisions() {
     assert!(!revisions[1].conflicted);
 }
 
+// @verifies PROJECTOR.SERVER.HISTORY.RENDERS_SNAPSHOT_DIFF_HISTORY
+#[test]
+fn server_lists_rendered_snapshot_diffs_for_body_revisions() {
+    let repo = temp_repo("body-history-diff-list");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    let workspace_id = first_sync
+        .lines()
+        .find_map(|line| line.strip_prefix("workspace_id: "))
+        .expect("workspace id")
+        .to_owned();
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/history-diff-list.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/history-diff-list.html"),
+        "<p>updated revision</p>\n",
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap");
+    let document_id = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| {
+            !entry.deleted
+                && entry.mount_relative_path == Path::new("private")
+                && entry.relative_path == Path::new("briefs/history-diff-list.html")
+        })
+        .expect("created entry")
+        .document_id
+        .as_str()
+        .to_owned();
+
+    let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
+    assert_eq!(revisions.len(), 2);
+    assert_eq!(revisions[0].diff_lines[0], "--- base");
+    assert_eq!(revisions[0].diff_lines[1], "+++ snapshot");
+    assert!(
+        revisions[0]
+            .diff_lines
+            .iter()
+            .any(|line| line == "+<p>created revision</p>")
+    );
+    assert!(
+        revisions[1]
+            .diff_lines
+            .iter()
+            .any(|line| line == "-<p>created revision</p>")
+    );
+    assert!(
+        revisions[1]
+            .diff_lines
+            .iter()
+            .any(|line| line == "+<p>updated revision</p>")
+    );
+}
+
 // @verifies PROJECTOR.HISTORY.MANIFEST_PATH_HISTORY
 #[test]
 fn server_state_retains_document_path_history() {

@@ -79,8 +79,7 @@ Projector records destructive document-history surgery durably without retaining
 Server history storage can retain checkpointed document body snapshots together with CRDT update history so older dense update runs can compact without losing readable history reconstruction.
 
 @spec PROJECTOR.SERVER.HISTORY.RENDERS_SNAPSHOT_DIFF_HISTORY
-@planned
-Server history storage can render readable document history from retained checkpoints and diffs without requiring clients to interpret raw CRDT updates directly.
+`POST /history/body/list` returns readable base-to-snapshot diff lines for retained body revisions so clients do not need to interpret raw retained CRDT payloads directly.
 
 @spec PROJECTOR.SERVER.HISTORY.REDACTS_RETAINED_BODY_HISTORY
 @planned

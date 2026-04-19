@@ -453,10 +453,79 @@ impl RetainedBodyHistoryPayload {
             history_kind: history_kind.as_str().to_owned(),
             base_text: self.base_text.clone(),
             body_text: self.materialized_text.clone(),
+            diff_lines: render_snapshot_diff_lines(&self.base_text, &self.materialized_text),
             conflicted: self.conflicted,
             timestamp_ms,
         }
     }
+}
+
+fn render_snapshot_diff_lines(base_text: &str, body_text: &str) -> Vec<String> {
+    let base = split_lines_for_diff(base_text);
+    let body = split_lines_for_diff(body_text);
+    let lcs = build_lcs_table(&base, &body);
+    let mut lines = vec![
+        "--- base".to_owned(),
+        "+++ snapshot".to_owned(),
+        "@@".to_owned(),
+    ];
+    lines.extend(render_lcs_diff(&base, &body, &lcs, 0, 0));
+    lines
+}
+
+fn split_lines_for_diff(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    text.split_inclusive('\n')
+        .map(str::to_owned)
+        .collect::<Vec<_>>()
+}
+
+fn build_lcs_table(left: &[String], right: &[String]) -> Vec<Vec<usize>> {
+    let mut table = vec![vec![0; right.len() + 1]; left.len() + 1];
+    for left_index in (0..left.len()).rev() {
+        for right_index in (0..right.len()).rev() {
+            table[left_index][right_index] = if left[left_index] == right[right_index] {
+                table[left_index + 1][right_index + 1] + 1
+            } else {
+                table[left_index + 1][right_index].max(table[left_index][right_index + 1])
+            };
+        }
+    }
+    table
+}
+
+fn render_lcs_diff(
+    left: &[String],
+    right: &[String],
+    lcs: &[Vec<usize>],
+    mut left_index: usize,
+    mut right_index: usize,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    while left_index < left.len() && right_index < right.len() {
+        if left[left_index] == right[right_index] {
+            lines.push(format!(" {}", left[left_index].trim_end_matches('\n')));
+            left_index += 1;
+            right_index += 1;
+        } else if lcs[left_index + 1][right_index] >= lcs[left_index][right_index + 1] {
+            lines.push(format!("-{}", left[left_index].trim_end_matches('\n')));
+            left_index += 1;
+        } else {
+            lines.push(format!("+{}", right[right_index].trim_end_matches('\n')));
+            right_index += 1;
+        }
+    }
+    while left_index < left.len() {
+        lines.push(format!("-{}", left[left_index].trim_end_matches('\n')));
+        left_index += 1;
+    }
+    while right_index < right.len() {
+        lines.push(format!("+{}", right[right_index].trim_end_matches('\n')));
+        right_index += 1;
+    }
+    lines
 }
 
 impl BodyStateModel for FullTextBodyModel {

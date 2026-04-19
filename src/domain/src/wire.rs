@@ -128,6 +128,7 @@ pub struct DocumentBodyRevision {
     pub history_kind: String,
     pub base_text: String,
     pub body_text: String,
+    pub diff_lines: Vec<String>,
     pub conflicted: bool,
     pub timestamp_ms: u128,
 }

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use projector_domain::{BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentPathRevision};
 
-use crate::restore_browser::{simple_line_diff, simple_line_diff_with_labels};
+use crate::restore_browser::simple_line_diff;
 
 pub(crate) fn format_event_path(
     mount_relative_path: Option<&str>,
@@ -37,10 +37,14 @@ pub(super) fn print_body_revision(revision: &DocumentBodyRevision) {
     );
     println!("snapshot_text: {:?}", revision.body_text);
     println!("diff:");
-    for line in
-        simple_line_diff_with_labels("base", "snapshot", &revision.base_text, &revision.body_text)
-    {
-        println!("{line}");
+    if revision.diff_lines.is_empty() {
+        for line in simple_line_diff(&revision.base_text, &revision.body_text) {
+            println!("{line}");
+        }
+    } else {
+        for line in &revision.diff_lines {
+            println!("{line}");
+        }
     }
 }
 
