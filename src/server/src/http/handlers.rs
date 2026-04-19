@@ -13,6 +13,8 @@ use axum::{Json, Router};
 use projector_domain::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, ChangesSinceRequest,
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
+    ClearHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyResponse,
+    GetHistoryCompactionPolicyRequest, GetHistoryCompactionPolicyResponse,
     ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
     ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
     ListSyncEntriesResponse, MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
@@ -20,7 +22,8 @@ use projector_domain::{
     PreviewRedactDocumentBodyHistoryResponse, PurgeDocumentBodyHistoryRequest,
     ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
     ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
-    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, UpdateDocumentRequest,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest,
+    UpdateDocumentRequest,
 };
 
 use crate::{StoreError, WorkspaceStore};
@@ -52,6 +55,9 @@ pub(super) fn app(store: Arc<dyn WorkspaceStore>) -> Router {
         )
         .route("/history/body/redact", post(redact_body_history))
         .route("/history/body/purge", post(purge_body_history))
+        .route("/history/compact/get", post(get_history_compaction_policy))
+        .route("/history/compact/set", post(set_history_compaction_policy))
+        .route("/history/compact/clear", post(clear_history_compaction_policy))
         .route("/history/path/list", post(list_path_revisions))
         .route(
             "/history/workspace/reconstruct",
@@ -280,6 +286,45 @@ async fn purge_body_history(
         .map_err(store_error_response)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_history_compaction_policy(
+    State(state): State<AppState>,
+    Json(request): Json<GetHistoryCompactionPolicyRequest>,
+) -> Result<Json<GetHistoryCompactionPolicyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let response = state
+        .store
+        .get_history_compaction_policy(&request.workspace_id, &request.repo_relative_path)
+        .await
+        .map_err(store_error_response)?;
+
+    Ok(Json(response))
+}
+
+async fn set_history_compaction_policy(
+    State(state): State<AppState>,
+    Json(request): Json<SetHistoryCompactionPolicyRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ApiErrorResponse>)> {
+    state
+        .store
+        .set_history_compaction_policy(&request)
+        .await
+        .map_err(store_error_response)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn clear_history_compaction_policy(
+    State(state): State<AppState>,
+    Json(request): Json<ClearHistoryCompactionPolicyRequest>,
+) -> Result<Json<ClearHistoryCompactionPolicyResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let removed = state
+        .store
+        .clear_history_compaction_policy(&request)
+        .await
+        .map_err(store_error_response)?;
+
+    Ok(Json(ClearHistoryCompactionPolicyResponse { removed }))
 }
 
 async fn redact_body_history(

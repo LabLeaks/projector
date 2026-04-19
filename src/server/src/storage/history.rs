@@ -5,10 +5,10 @@ Owns durable document body-revision and path-revision capture for file-backed an
 // @fileimplements PROJECTOR.SERVER.HISTORY
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tokio_postgres::Client;
+use tokio_postgres::{Client, GenericClient};
 
 use super::StoreError;
 use super::bodies::{file_persist_workspace_snapshot, file_read_workspace_snapshot};
@@ -26,14 +26,24 @@ use super::provenance::{
 };
 use super::workspaces::workspace_dir;
 use projector_domain::{
-    BootstrapSnapshot, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision,
-    DocumentId, DocumentKind, DocumentPathRevision, ManifestEntry, ManifestState,
-    PreviewPurgeDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryRequest,
-    ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
-    RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
+    BootstrapSnapshot, ClearHistoryCompactionPolicyRequest, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
+    DocumentPathRevision, GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy,
+    ManifestEntry, ManifestState, PreviewPurgeDocumentBodyHistoryRequest,
+    PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, ProvenanceEventKind,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
+    SetHistoryCompactionPolicyRequest,
 };
 
 const HISTORY_REDACTION_MARKER: &str = "[REDACTED]";
+const DEFAULT_HISTORY_COMPACTION_REVISIONS: usize = 100;
+const DEFAULT_HISTORY_COMPACTION_FREQUENCY: usize = 10;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub(crate) struct StoredHistoryCompactionPolicyOverride {
+    pub repo_relative_path: PathBuf,
+    pub policy: HistoryCompactionPolicy,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FileBodyRevision {
@@ -264,6 +274,171 @@ pub(crate) fn ensure_expected_history_match_set(
     )))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResolvedHistoryCompactionPolicy {
+    pub(crate) policy: HistoryCompactionPolicy,
+    pub(crate) source_kind: &'static str,
+    pub(crate) source_path: Option<PathBuf>,
+}
+
+fn default_history_compaction_policy() -> HistoryCompactionPolicy {
+    HistoryCompactionPolicy {
+        revisions: DEFAULT_HISTORY_COMPACTION_REVISIONS,
+        frequency: DEFAULT_HISTORY_COMPACTION_FREQUENCY,
+    }
+}
+
+pub(crate) fn resolve_history_compaction_policy(
+    overrides: &[StoredHistoryCompactionPolicyOverride],
+    repo_relative_path: &Path,
+) -> ResolvedHistoryCompactionPolicy {
+    let mut candidate = Some(repo_relative_path);
+    while let Some(path) = candidate {
+        if let Some(override_entry) = overrides
+            .iter()
+            .find(|entry| entry.repo_relative_path == path)
+        {
+            return ResolvedHistoryCompactionPolicy {
+                policy: override_entry.policy.clone(),
+                source_kind: if path == repo_relative_path {
+                    "path_override"
+                } else {
+                    "ancestor_override"
+                },
+                source_path: Some(path.to_path_buf()),
+            };
+        }
+        candidate = path.parent().filter(|parent| !parent.as_os_str().is_empty());
+    }
+
+    ResolvedHistoryCompactionPolicy {
+        policy: default_history_compaction_policy(),
+        source_kind: "default",
+        source_path: None,
+    }
+}
+
+pub(crate) fn history_compaction_response(
+    overrides: &[StoredHistoryCompactionPolicyOverride],
+    repo_relative_path: &Path,
+) -> GetHistoryCompactionPolicyResponse {
+    let resolved = resolve_history_compaction_policy(overrides, repo_relative_path);
+    GetHistoryCompactionPolicyResponse {
+        policy: resolved.policy,
+        source_kind: resolved.source_kind.to_owned(),
+        source_path: resolved
+            .source_path
+            .map(|path| path.display().to_string()),
+    }
+}
+
+fn replay_document_revision_states(
+    revisions: impl IntoIterator<Item = FileBodyRevision>,
+) -> Vec<(FileBodyRevision, CanonicalBodyState)> {
+    let mut states = HashMap::<String, CanonicalBodyState>::new();
+    let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
+    let mut replayed = Vec::new();
+    for revision in revisions {
+        let previous_state = if revision.history_kind == RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            revision
+                .effective_checkpoint_anchor_seq()
+                .and_then(|anchor_seq| {
+                    anchored_states.get(&(revision.document_id.clone(), anchor_seq))
+                })
+        } else {
+            states.get(revision.document_id.as_str())
+        };
+        let next_state = revision.replayed_body_state(previous_state);
+        if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
+            anchored_states.insert(
+                (revision.document_id.clone(), anchor_seq),
+                next_state.clone(),
+            );
+        }
+        states.insert(revision.document_id.clone(), next_state.clone());
+        replayed.push((revision, next_state));
+    }
+    replayed
+}
+
+fn is_checkpoint_history_kind(kind: RetainedBodyHistoryKind) -> bool {
+    matches!(
+        kind,
+        RetainedBodyHistoryKind::FullTextCheckpointV1 | RetainedBodyHistoryKind::YrsTextCheckpointV1
+    )
+}
+
+pub(crate) fn compact_document_body_revisions(
+    revisions: &[FileBodyRevision],
+    document_id: &str,
+    policy: &HistoryCompactionPolicy,
+) -> Result<Vec<FileBodyRevision>, StoreError> {
+    let document_revisions = revisions
+        .iter()
+        .filter(|revision| revision.document_id == document_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if document_revisions.len() <= policy.revisions {
+        return Ok(document_revisions);
+    }
+
+    let older_len = document_revisions.len() - policy.revisions;
+    let replayed = replay_document_revision_states(document_revisions);
+    let mut compacted = Vec::new();
+    let mut previous_kept_text = None::<String>;
+    let mut last_checkpoint_seq = None::<u64>;
+
+    for (index, (revision, state)) in replayed.into_iter().enumerate() {
+        let keep = index >= older_len || index % policy.frequency == 0;
+        if !keep {
+            continue;
+        }
+
+        let base_text = previous_kept_text
+            .clone()
+            .unwrap_or_else(|| revision.base_text.clone());
+        let payload = if index < older_len || is_checkpoint_history_kind(revision.history_kind) {
+            FULL_TEXT_BODY_MODEL.checkpoint_history(base_text.clone(), state.materialized_text())
+        } else if revision.conflicted {
+            FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+                base_text.clone(),
+                state.materialized_text(),
+                true,
+            )
+        } else {
+            FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+                base_text.clone(),
+                state.materialized_text(),
+                false,
+            )
+        };
+        let checkpoint_anchor_seq = if payload.kind() == RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            last_checkpoint_seq
+        } else {
+            Some(revision.seq)
+        };
+        let compacted_revision = FileBodyRevision {
+            seq: revision.seq,
+            workspace_cursor: revision.workspace_cursor,
+            actor_id: revision.actor_id,
+            document_id: revision.document_id,
+            checkpoint_anchor_seq,
+            history_kind: payload.kind(),
+            base_text: payload.base_text().to_owned(),
+            body_text: payload.storage_payload().to_owned(),
+            conflicted: payload.conflicted(),
+            timestamp_ms: revision.timestamp_ms,
+        };
+        if compacted_revision.history_kind != RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            last_checkpoint_seq = Some(compacted_revision.seq);
+        }
+        previous_kept_text = Some(state.materialized_text().to_owned());
+        compacted.push(compacted_revision);
+    }
+
+    Ok(compacted)
+}
+
 pub(crate) fn replay_body_revision_run(
     revisions: impl IntoIterator<Item = FileBodyRevision>,
 ) -> HashMap<String, CanonicalBodyState> {
@@ -320,6 +495,13 @@ fn file_body_revisions_path(state_dir: &Path, workspace_id: &str) -> std::path::
     workspace_dir(state_dir, workspace_id).join("body_revisions.json")
 }
 
+fn file_history_compaction_policies_path(
+    state_dir: &Path,
+    workspace_id: &str,
+) -> std::path::PathBuf {
+    workspace_dir(state_dir, workspace_id).join("history_compaction_policies.json")
+}
+
 fn effective_workspace_cursor(seq: u64, workspace_cursor: u64) -> u64 {
     if workspace_cursor == 0 {
         seq
@@ -358,6 +540,132 @@ pub(crate) fn file_append_body_revision(
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
     fs::write(path, encoded)?;
     Ok(())
+}
+
+fn file_write_body_revisions(
+    state_dir: &Path,
+    workspace_id: &str,
+    revisions: &[FileBodyRevision],
+) -> Result<(), StoreError> {
+    let workspace_root = workspace_dir(state_dir, workspace_id);
+    fs::create_dir_all(&workspace_root)?;
+    let encoded =
+        serde_json::to_vec_pretty(revisions).map_err(|err| StoreError::new(err.to_string()))?;
+    fs::write(file_body_revisions_path(state_dir, workspace_id), encoded)?;
+    Ok(())
+}
+
+fn file_read_history_compaction_policies(
+    state_dir: &Path,
+    workspace_id: &str,
+) -> Result<Vec<StoredHistoryCompactionPolicyOverride>, StoreError> {
+    let path = file_history_compaction_policies_path(state_dir, workspace_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read(path)?;
+    serde_json::from_slice(&content).map_err(|err| StoreError::new(err.to_string()))
+}
+
+fn file_write_history_compaction_policies(
+    state_dir: &Path,
+    workspace_id: &str,
+    overrides: &[StoredHistoryCompactionPolicyOverride],
+) -> Result<(), StoreError> {
+    let workspace_root = workspace_dir(state_dir, workspace_id);
+    fs::create_dir_all(&workspace_root)?;
+    let encoded =
+        serde_json::to_vec_pretty(overrides).map_err(|err| StoreError::new(err.to_string()))?;
+    fs::write(
+        file_history_compaction_policies_path(state_dir, workspace_id),
+        encoded,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn file_get_history_compaction_policy(
+    state_dir: &Path,
+    workspace_id: &str,
+    repo_relative_path: &str,
+) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+    Ok(history_compaction_response(
+        &file_read_history_compaction_policies(state_dir, workspace_id)?,
+        Path::new(repo_relative_path),
+    ))
+}
+
+pub(crate) fn file_set_history_compaction_policy(
+    state_dir: &Path,
+    request: &SetHistoryCompactionPolicyRequest,
+) -> Result<(), StoreError> {
+    let mut overrides = file_read_history_compaction_policies(state_dir, &request.workspace_id)?;
+    let repo_relative_path = PathBuf::from(&request.repo_relative_path);
+    if let Some(existing) = overrides
+        .iter_mut()
+        .find(|entry| entry.repo_relative_path == repo_relative_path)
+    {
+        existing.policy = request.policy.clone();
+    } else {
+        overrides.push(StoredHistoryCompactionPolicyOverride {
+            repo_relative_path,
+            policy: request.policy.clone(),
+        });
+    }
+    overrides.sort_by(|left, right| left.repo_relative_path.cmp(&right.repo_relative_path));
+    file_write_history_compaction_policies(state_dir, &request.workspace_id, &overrides)
+}
+
+pub(crate) fn file_clear_history_compaction_policy(
+    state_dir: &Path,
+    request: &ClearHistoryCompactionPolicyRequest,
+) -> Result<bool, StoreError> {
+    let mut overrides = file_read_history_compaction_policies(state_dir, &request.workspace_id)?;
+    let original_len = overrides.len();
+    overrides.retain(|entry| entry.repo_relative_path != Path::new(&request.repo_relative_path));
+    let removed = overrides.len() != original_len;
+    if removed {
+        file_write_history_compaction_policies(state_dir, &request.workspace_id, &overrides)?;
+    }
+    Ok(removed)
+}
+
+pub(crate) fn file_enforce_history_compaction_policy(
+    state_dir: &Path,
+    workspace_id: &str,
+    document_id: &str,
+) -> Result<(), StoreError> {
+    let snapshot = file_read_workspace_snapshot(state_dir, workspace_id)?;
+    let Some(entry) = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| !entry.deleted && entry.document_id.as_str() == document_id)
+    else {
+        return Ok(());
+    };
+    let repo_relative_path = entry.mount_relative_path.join(&entry.relative_path);
+    let resolved = resolve_history_compaction_policy(
+        &file_read_history_compaction_policies(state_dir, workspace_id)?,
+        &repo_relative_path,
+    );
+    let revisions = file_read_body_revisions(state_dir, workspace_id)?;
+    let compacted =
+        compact_document_body_revisions(&revisions, document_id, &resolved.policy)?;
+    let original = revisions
+        .iter()
+        .filter(|revision| revision.document_id == document_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if compacted == original {
+        return Ok(());
+    }
+    let mut rewritten = revisions
+        .into_iter()
+        .filter(|revision| revision.document_id != document_id)
+        .collect::<Vec<_>>();
+    rewritten.extend(compacted);
+    rewritten.sort_by_key(|revision| revision.seq);
+    file_write_body_revisions(state_dir, workspace_id, &rewritten)
 }
 
 pub(crate) fn file_list_body_revisions(
@@ -819,6 +1127,78 @@ pub(crate) async fn insert_path_revision_tx(
     Ok(())
 }
 
+async fn postgres_read_history_compaction_policies(
+    client: &impl GenericClient,
+    workspace_id: &str,
+) -> Result<Vec<StoredHistoryCompactionPolicyOverride>, StoreError> {
+    let rows = client
+        .query(
+            "select repo_relative_path, revisions, frequency \
+             from history_compaction_policies \
+             where workspace_id = $1 \
+             order by repo_relative_path asc",
+            &[&workspace_id],
+        )
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| StoredHistoryCompactionPolicyOverride {
+            repo_relative_path: PathBuf::from(row.get::<_, String>("repo_relative_path")),
+            policy: HistoryCompactionPolicy {
+                revisions: row.get::<_, i32>("revisions") as usize,
+                frequency: row.get::<_, i32>("frequency") as usize,
+            },
+        })
+        .collect())
+}
+
+pub(crate) async fn postgres_get_history_compaction_policy(
+    client: &Client,
+    workspace_id: &str,
+    repo_relative_path: &str,
+) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+    Ok(history_compaction_response(
+        &postgres_read_history_compaction_policies(client, workspace_id).await?,
+        Path::new(repo_relative_path),
+    ))
+}
+
+pub(crate) async fn postgres_set_history_compaction_policy(
+    transaction: &tokio_postgres::Transaction<'_>,
+    request: &SetHistoryCompactionPolicyRequest,
+) -> Result<(), StoreError> {
+    transaction
+        .execute(
+            "insert into history_compaction_policies (workspace_id, repo_relative_path, revisions, frequency) \
+             values ($1, $2, $3, $4) \
+             on conflict (workspace_id, repo_relative_path) do update set \
+               revisions = excluded.revisions, \
+               frequency = excluded.frequency",
+            &[
+                &request.workspace_id,
+                &request.repo_relative_path,
+                &(request.policy.revisions as i32),
+                &(request.policy.frequency as i32),
+            ],
+        )
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn postgres_clear_history_compaction_policy(
+    transaction: &tokio_postgres::Transaction<'_>,
+    request: &ClearHistoryCompactionPolicyRequest,
+) -> Result<bool, StoreError> {
+    let removed = transaction
+        .execute(
+            "delete from history_compaction_policies \
+             where workspace_id = $1 and repo_relative_path = $2",
+            &[&request.workspace_id, &request.repo_relative_path],
+        )
+        .await?;
+    Ok(removed > 0)
+}
+
 pub(crate) async fn postgres_list_body_revisions(
     client: &Client,
     workspace_id: &str,
@@ -959,6 +1339,103 @@ pub(crate) async fn postgres_preview_purge_document_body_history(
         )));
     }
     Ok(matches)
+}
+
+pub(crate) async fn postgres_enforce_history_compaction_policy(
+    transaction: &tokio_postgres::Transaction<'_>,
+    workspace_id: &str,
+    document_id: &str,
+) -> Result<(), StoreError> {
+    let Some(path_row) = transaction
+        .query_opt(
+            "select mount_path, relative_path from document_paths \
+             where workspace_id = $1 and document_id = $2 and deleted = false",
+            &[&workspace_id, &document_id],
+        )
+        .await?
+    else {
+        return Ok(());
+    };
+    let repo_relative_path = PathBuf::from(path_row.get::<_, String>("mount_path"))
+        .join(path_row.get::<_, String>("relative_path"));
+    let resolved = resolve_history_compaction_policy(
+        &postgres_read_history_compaction_policies(transaction, workspace_id).await?,
+        &repo_relative_path,
+    );
+    let rows = transaction
+        .query(
+            "select seq, actor_id, document_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted, \
+                (extract(epoch from created_at) * 1000)::bigint as timestamp_ms \
+             from document_body_revisions \
+             where workspace_id = $1 and document_id = $2 \
+             order by seq asc",
+            &[&workspace_id, &document_id],
+        )
+        .await?;
+    let original = rows
+        .into_iter()
+        .map(|row| {
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok(FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: 0,
+                actor_id: row.get::<_, String>("actor_id"),
+                document_id: row.get::<_, String>("document_id"),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind: kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    let compacted =
+        compact_document_body_revisions(&original, document_id, &resolved.policy)?;
+    if compacted == original {
+        return Ok(());
+    }
+    let compacted_by_seq = compacted
+        .iter()
+        .map(|revision| (revision.seq, revision))
+        .collect::<HashMap<_, _>>();
+    for revision in &compacted {
+        transaction
+            .execute(
+                "update document_body_revisions \
+                 set checkpoint_anchor_seq = $3, history_kind = $4, base_text = $5, body_text = $6, conflicted = $7 \
+                 where workspace_id = $1 and seq = $2",
+                &[
+                    &workspace_id,
+                    &(revision.seq as i64),
+                    &revision.checkpoint_anchor_seq.map(|seq| seq as i64),
+                    &revision.history_kind.as_str(),
+                    &revision.base_text,
+                    &revision.body_text,
+                    &revision.conflicted,
+                ],
+            )
+            .await?;
+    }
+    let dropped = original
+        .iter()
+        .filter(|revision| !compacted_by_seq.contains_key(&revision.seq))
+        .map(|revision| revision.seq as i64)
+        .collect::<Vec<_>>();
+    if !dropped.is_empty() {
+        transaction
+            .execute(
+                "delete from document_body_revisions \
+                 where workspace_id = $1 and document_id = $2 and seq = any($3)",
+                &[&workspace_id, &document_id, &dropped],
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn postgres_purge_document_body_history(

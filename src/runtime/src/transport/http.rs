@@ -10,15 +10,18 @@ use projector_domain::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
     DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
-    DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest,
-    ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
-    ListSyncEntriesRequest, ListSyncEntriesResponse, MoveDocumentRequest,
+    DocumentPathRevision, GetHistoryCompactionPolicyRequest,
+    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy, ListBodyRevisionsRequest,
+    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
+    ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
+    ListSyncEntriesResponse, MoveDocumentRequest,
     PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
     PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
     ProvenanceEvent, PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest,
     ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     ResolveHistoricalPathResponse, RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
-    SyncContext, SyncEntrySummary, UpdateDocumentRequest,
+    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest,
+    ClearHistoryCompactionPolicyResponse, SyncContext, SyncEntrySummary, UpdateDocumentRequest,
 };
 
 use super::Transport;
@@ -470,6 +473,81 @@ impl Transport for HttpTransport {
         let payload: PreviewPurgeDocumentBodyHistoryResponse =
             response.json().map_err(io::Error::other)?;
         Ok(payload.matches)
+    }
+
+    fn get_history_compaction_policy(
+        &mut self,
+        binding: &dyn SyncContext,
+        repo_relative_path: &Path,
+    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/compact/get", self.base_url))
+            .json(&GetHistoryCompactionPolicyRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                repo_relative_path: repo_relative_path.display().to_string(),
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error("get history compaction policy request", response));
+        }
+
+        let payload: GetHistoryCompactionPolicyResponse =
+            response.json().map_err(io::Error::other)?;
+        Ok((payload.policy, payload.source_kind, payload.source_path))
+    }
+
+    fn set_history_compaction_policy(
+        &mut self,
+        binding: &dyn SyncContext,
+        repo_relative_path: &Path,
+        policy: &HistoryCompactionPolicy,
+    ) -> Result<(), Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/compact/set", self.base_url))
+            .json(&SetHistoryCompactionPolicyRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                repo_relative_path: repo_relative_path.display().to_string(),
+                policy: policy.clone(),
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error("set history compaction policy request", response));
+        }
+
+        Ok(())
+    }
+
+    fn clear_history_compaction_policy(
+        &mut self,
+        binding: &dyn SyncContext,
+        repo_relative_path: &Path,
+    ) -> Result<bool, Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/compact/clear", self.base_url))
+            .json(&ClearHistoryCompactionPolicyRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                repo_relative_path: repo_relative_path.display().to_string(),
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error(
+                "clear history compaction policy request",
+                response,
+            ));
+        }
+
+        let payload: ClearHistoryCompactionPolicyResponse =
+            response.json().map_err(io::Error::other)?;
+        Ok(payload.removed)
     }
 
     fn restore_workspace_at_cursor(

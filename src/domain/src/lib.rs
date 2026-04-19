@@ -12,20 +12,21 @@ pub use ids::{ActorId, DocumentId, WorkspaceId};
 pub use manifest::{DocumentKind, ManifestEntry, ManifestState};
 pub use provenance::{ProvenanceEvent, ProvenanceEventKind};
 pub use sync_config::{
-    HistoryCompactionPolicy, HistoryCompactionPolicyOverride, RepoSyncConfig, RepoSyncEntry,
-    SyncEntryKind,
+    HistoryCompactionPolicy, RepoSyncConfig, RepoSyncEntry, SyncEntryKind,
 };
 pub use wire::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
     DocumentBody, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision,
-    DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest,
-    ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
-    ListSyncEntriesRequest, ListSyncEntriesResponse, MoveDocumentRequest,
+    DocumentPathRevision, GetHistoryCompactionPolicyRequest,
+    GetHistoryCompactionPolicyResponse, ListBodyRevisionsRequest, ListBodyRevisionsResponse,
+    ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
+    ListPathRevisionsResponse, ListSyncEntriesRequest, ListSyncEntriesResponse, MoveDocumentRequest,
     PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
     PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
     PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
-    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntrySummary,
-    UpdateDocumentRequest,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest,
+    ClearHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyResponse,
+    SyncEntrySummary, UpdateDocumentRequest,
 };

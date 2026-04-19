@@ -50,6 +50,14 @@ create table if not exists path_revisions (
   revision_json text not null,
   primary key (workspace_id, seq)
 );
+
+create table if not exists history_compaction_policies (
+  workspace_id text not null,
+  repo_relative_path text not null,
+  revisions integer not null,
+  frequency integer not null,
+  primary key (workspace_id, repo_relative_path)
+);
 "#;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

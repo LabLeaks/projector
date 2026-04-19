@@ -7,7 +7,7 @@ use std::path::Path;
 
 use projector_domain::{
     BootstrapSnapshot, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision,
-    DocumentId, DocumentPathRevision, ProvenanceEvent, SyncContext,
+    DocumentId, DocumentPathRevision, HistoryCompactionPolicy, ProvenanceEvent, SyncContext,
 };
 
 mod http;
@@ -123,4 +123,20 @@ pub trait Transport {
         document_id: &DocumentId,
         limit: usize,
     ) -> Result<Vec<DocumentBodyPurgeMatch>, Self::Error>;
+    fn get_history_compaction_policy(
+        &mut self,
+        binding: &dyn SyncContext,
+        repo_relative_path: &Path,
+    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error>;
+    fn set_history_compaction_policy(
+        &mut self,
+        binding: &dyn SyncContext,
+        repo_relative_path: &Path,
+        policy: &HistoryCompactionPolicy,
+    ) -> Result<(), Self::Error>;
+    fn clear_history_compaction_policy(
+        &mut self,
+        binding: &dyn SyncContext,
+        repo_relative_path: &Path,
+    ) -> Result<bool, Self::Error>;
 }

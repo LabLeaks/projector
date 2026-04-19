@@ -90,6 +90,5 @@ Projector records destructive document-history surgery durably without retaining
 `POST /history/body/purge` records destructive document-history surgery durably without retaining the removed historical body content in the audit record.
 
 @spec PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
-@planned
-Server history storage can enforce the effective path-scoped history compaction policy during background history maintenance by retaining dense recent body history and sparser older checkpoints without affecting live current document body state.
+Server history storage enforces the effective path-scoped history compaction policy during retained body-history writes by keeping dense recent body history and rewriting older retained history as sparser checkpoints without affecting live current document body state.
 */

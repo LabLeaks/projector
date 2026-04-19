@@ -12,9 +12,9 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use projector_domain::{
     ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
-    DocumentPathRevision, HistoryCompactionPolicy, HistoryCompactionPolicyOverride,
-    ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
-    ListPathRevisionsRequest, ListPathRevisionsResponse, ManifestEntry, ManifestState,
+    DocumentPathRevision, HistoryCompactionPolicy, ListBodyRevisionsRequest,
+    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
+    ListPathRevisionsResponse, ManifestEntry, ManifestState,
     PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
     PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
     ProjectionRoots, ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
@@ -458,7 +458,6 @@ fn run_legacy_sync_with_env(
                     kind: SyncEntryKind::Directory,
                 })
                 .collect(),
-            history_compaction_policies: vec![],
         };
         sync_store
             .save(&sync_config)
@@ -915,7 +914,6 @@ fn clone_sync_config_for_repo(source_repo: &Path, dest_repo: &Path, actor_id: &s
                 entry
             })
             .collect(),
-        history_compaction_policies: config.history_compaction_policies,
     };
     FileRepoSyncConfigStore::new(dest_repo)
         .save(&cloned)
@@ -942,11 +940,21 @@ fn save_sync_config_for_binding(repo_root: &Path, binding: &CheckoutBinding) {
                 kind,
             })
             .collect(),
-        history_compaction_policies: vec![],
     };
     FileRepoSyncConfigStore::new(repo_root)
         .save(&config)
         .expect("save sync config for binding");
+}
+
+fn default_compaction_policy_response() -> (HistoryCompactionPolicy, String, Option<String>) {
+    (
+        HistoryCompactionPolicy {
+            revisions: 100,
+            frequency: 10,
+        },
+        "default".to_owned(),
+        None,
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -1112,6 +1120,31 @@ impl Transport for RejectCreateTransport {
         _relative_path: &Path,
     ) -> Result<DocumentId, Self::Error> {
         Ok(DocumentId::new("doc-historical"))
+    }
+
+    fn get_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+        Ok(default_compaction_policy_response())
+    }
+
+    fn set_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+        _policy: &HistoryCompactionPolicy,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn clear_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
     }
 }
 
@@ -1308,6 +1341,31 @@ impl Transport for RetryAfterRebootstrapTransport {
     ) -> Result<DocumentId, Self::Error> {
         Ok(DocumentId::new("doc-historical"))
     }
+
+    fn get_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+        Ok(default_compaction_policy_response())
+    }
+
+    fn set_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+        _policy: &HistoryCompactionPolicy,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn clear_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1501,6 +1559,31 @@ impl Transport for RetryImmediatelyTransport {
     ) -> Result<DocumentId, Self::Error> {
         Ok(DocumentId::new("doc-historical"))
     }
+
+    fn get_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+        Ok(default_compaction_policy_response())
+    }
+
+    fn set_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+        _policy: &HistoryCompactionPolicy,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn clear_history_compaction_policy(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _repo_relative_path: &Path,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
 }
 
 // @verifies PROJECTOR.WORKSPACE.PROJECTION_ROOT
@@ -1690,7 +1773,6 @@ fn doctor_reports_sync_entry_problems() {
                 remote_relative_path: PathBuf::from("private/note.txt"),
                 kind: SyncEntryKind::File,
             }],
-            history_compaction_policies: vec![],
         })
         .expect("save sync config");
     FileRuntimeStatusStore::new(repo.join(".projector/status.txt"))
@@ -1748,7 +1830,6 @@ fn doctor_reports_runtime_and_sync_issue_state() {
                 remote_relative_path: PathBuf::from("private"),
                 kind: SyncEntryKind::Directory,
             }],
-            history_compaction_policies: vec![],
         })
         .expect("save sync config");
     FileRuntimeStatusStore::new(repo.join(".projector/status.txt"))
@@ -4943,6 +5024,9 @@ fn projector_purge_uses_tty_browser_to_preview_clearable_revisions() {
 fn compact_sets_path_scoped_history_policy_override() {
     let repo = temp_repo("cli-compact-set");
     fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
 
     let output = run_projector(
         &repo,
@@ -4961,27 +5045,16 @@ fn compact_sets_path_scoped_history_policy_override() {
     assert!(output.contains("effective_policy: revisions=12 frequency=4"));
     assert!(output.contains("policy_source: path_override"));
     assert!(output.contains("source_path: private"));
-
-    let config = FileRepoSyncConfigStore::new(&repo)
-        .load()
-        .expect("load compact config");
-    assert_eq!(
-        config.history_compaction_policies,
-        vec![HistoryCompactionPolicyOverride {
-            repo_relative_path: PathBuf::from("private"),
-            policy: HistoryCompactionPolicy {
-                revisions: 12,
-                frequency: 4,
-            },
-        }]
-    );
 }
 
 // @verifies PROJECTOR.HISTORY.COMPACTION_POLICY
 #[test]
-fn compact_history_policy_persists_repo_local_override() {
+fn compact_history_policy_persists_server_override() {
     let repo = temp_repo("compact-history-policy");
     fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
 
     run_projector(
         &repo,
@@ -4995,17 +5068,10 @@ fn compact_history_policy_persists_repo_local_override() {
         ],
     );
 
-    let config = FileRepoSyncConfigStore::new(&repo).load().expect("load compact config");
-    assert_eq!(
-        config.history_compaction_policies,
-        vec![HistoryCompactionPolicyOverride {
-            repo_relative_path: PathBuf::from("private"),
-            policy: HistoryCompactionPolicy {
-                revisions: 12,
-                frequency: 4,
-            },
-        }]
-    );
+    let output = run_projector(&repo, &["compact", "private"]);
+    assert!(output.contains("effective_policy: revisions=12 frequency=4"));
+    assert!(output.contains("policy_source: path_override"));
+    assert!(output.contains("source_path: private"));
 }
 
 // @verifies PROJECTOR.CLI.COMPACT.REPORTS_EFFECTIVE_POLICY
@@ -5013,6 +5079,9 @@ fn compact_history_policy_persists_repo_local_override() {
 fn compact_reports_default_inherited_and_exact_path_policy_sources() {
     let repo = temp_repo("cli-compact-report");
     fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
 
     let default_output = run_projector(&repo, &["compact", "notes/today.html"]);
     assert!(default_output.contains("path: notes/today.html"));
@@ -5058,6 +5127,9 @@ fn compact_reports_default_inherited_and_exact_path_policy_sources() {
 fn compact_history_policy_inheritance_uses_nearest_override() {
     let repo = temp_repo("compact-history-inheritance");
     fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
 
     run_projector(
         &repo,
@@ -5093,11 +5165,14 @@ fn compact_history_policy_inheritance_uses_nearest_override() {
     assert!(inherited_output.contains("source_path: private"));
 }
 
-// @verifies PROJECTOR.CLI.COMPACT.CLEARS_PATH_OVERRIDE
+// @verifies PROJECTOR.CLI.COMPACT.INHERITS_PATH_POLICY
 #[test]
-fn compact_clear_removes_local_override_and_falls_back_to_ancestor() {
-    let repo = temp_repo("cli-compact-clear");
+fn compact_inherit_removes_server_override_and_falls_back_to_ancestor() {
+    let repo = temp_repo("cli-compact-inherit");
     fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
 
     run_projector(
         &repo,
@@ -5122,25 +5197,81 @@ fn compact_clear_removes_local_override_and_falls_back_to_ancestor() {
         ],
     );
 
-    let output = run_projector(&repo, &["compact", "private/notes/today.html", "--clear"]);
-    assert!(output.contains("compact_policy: cleared"));
+    let output = run_projector(&repo, &["compact", "private/notes/today.html", "--inherit"]);
+    assert!(output.contains("compact_policy: inherited"));
     assert!(output.contains("effective_policy: revisions=12 frequency=4"));
     assert!(output.contains("policy_source: ancestor_override"));
     assert!(output.contains("source_path: private"));
 
-    let config = FileRepoSyncConfigStore::new(&repo)
-        .load()
-        .expect("load compact config");
-    assert_eq!(
-        config.history_compaction_policies,
-        vec![HistoryCompactionPolicyOverride {
-            repo_relative_path: PathBuf::from("private"),
-            policy: HistoryCompactionPolicy {
-                revisions: 12,
-                frequency: 4,
-            },
-        }]
+    let query = run_projector(&repo, &["compact", "private/notes/today.html"]);
+    assert!(query.contains("effective_policy: revisions=12 frequency=4"));
+    assert!(query.contains("policy_source: ancestor_override"));
+}
+
+// @verifies PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
+#[test]
+fn server_enforces_history_compaction_policy_on_retained_body_history() {
+    let repo = temp_repo("server-history-compaction");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private/compacted.html",
+            "--revisions",
+            "2",
+            "--frequency",
+            "2",
+        ],
     );
+
+    fs::create_dir_all(repo.join("private")).expect("create private dir");
+    for (idx, body) in [
+        "<p>revision one</p>\n",
+        "<p>revision two</p>\n",
+        "<p>revision three</p>\n",
+        "<p>revision four</p>\n",
+        "<p>revision five</p>\n",
+        "<p>revision six</p>\n",
+    ]
+    .iter()
+    .enumerate()
+    {
+        fs::write(repo.join("private/compacted.html"), body).expect("write revision");
+        run_projector(&repo, &["sync"]);
+        assert!(
+            repo.join("private/compacted.html").exists(),
+            "sync should keep materialized file after revision {}",
+            idx + 1
+        );
+    }
+
+    let binding = FileBindingStore::new(&repo)
+        .load()
+        .expect("load binding")
+        .expect("binding exists");
+    let document_id = resolve_document_by_historical_path(
+        &addr,
+        binding.workspace_id.as_str(),
+        "private",
+        "compacted.html",
+    );
+    let revisions = list_body_revisions(
+        &addr,
+        binding.workspace_id.as_str(),
+        &document_id,
+        20,
+    );
+    assert_eq!(
+        revisions.iter().map(|revision| revision.seq).collect::<Vec<_>>(),
+        vec![1, 3, 5, 6]
+    );
+    assert_eq!(revisions[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(revisions[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(revisions[3].body_text, "<p>revision six</p>\n");
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR

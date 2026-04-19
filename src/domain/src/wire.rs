@@ -5,7 +5,9 @@ Defines typed sync payloads for bootstrap, delta reads, document lifecycle write
 // @fileimplements PROJECTOR.DOMAIN.WIRE
 use serde::{Deserialize, Serialize};
 
-use crate::{DocumentId, ManifestState, ProvenanceEvent, SyncEntryKind};
+use crate::{
+    DocumentId, HistoryCompactionPolicy, ManifestState, ProvenanceEvent, SyncEntryKind,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BootstrapRequest {
@@ -73,6 +75,37 @@ pub struct MoveDocumentRequest {
     pub document_id: String,
     pub mount_relative_path: String,
     pub relative_path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GetHistoryCompactionPolicyRequest {
+    pub workspace_id: String,
+    pub repo_relative_path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GetHistoryCompactionPolicyResponse {
+    pub policy: HistoryCompactionPolicy,
+    pub source_kind: String,
+    pub source_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SetHistoryCompactionPolicyRequest {
+    pub workspace_id: String,
+    pub repo_relative_path: String,
+    pub policy: HistoryCompactionPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ClearHistoryCompactionPolicyRequest {
+    pub workspace_id: String,
+    pub repo_relative_path: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ClearHistoryCompactionPolicyResponse {
+    pub removed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

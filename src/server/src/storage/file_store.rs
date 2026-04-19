@@ -9,11 +9,12 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
-    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
+    GetHistoryCompactionPolicyResponse, MoveDocumentRequest,
+    PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
-    UpdateDocumentRequest,
+    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest, UpdateDocumentRequest,
 };
 
 use super::{StoreError, WorkspaceStore, bodies, history, manifest, provenance, workspaces};
@@ -196,5 +197,27 @@ impl WorkspaceStore for FileWorkspaceStore {
         request: &PurgeDocumentBodyHistoryRequest,
     ) -> Result<(), StoreError> {
         history::file_purge_document_body_history(&self.state_dir, request)
+    }
+
+    async fn get_history_compaction_policy(
+        &self,
+        workspace_id: &str,
+        repo_relative_path: &str,
+    ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+        history::file_get_history_compaction_policy(&self.state_dir, workspace_id, repo_relative_path)
+    }
+
+    async fn set_history_compaction_policy(
+        &self,
+        request: &SetHistoryCompactionPolicyRequest,
+    ) -> Result<(), StoreError> {
+        history::file_set_history_compaction_policy(&self.state_dir, request)
+    }
+
+    async fn clear_history_compaction_policy(
+        &self,
+        request: &ClearHistoryCompactionPolicyRequest,
+    ) -> Result<bool, StoreError> {
+        history::file_clear_history_compaction_policy(&self.state_dir, request)
     }
 }

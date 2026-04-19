@@ -10,17 +10,18 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
-    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
+    GetHistoryCompactionPolicyResponse, MoveDocumentRequest,
+    PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
-    UpdateDocumentRequest,
+    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest, UpdateDocumentRequest,
 };
 use rusqlite::Connection;
 
 use super::{StoreError, WorkspaceStore};
 
-mod history;
+pub(crate) mod history;
 mod manifest;
 mod restore;
 pub(crate) mod state;
@@ -222,6 +223,37 @@ impl WorkspaceStore for SqliteWorkspaceStore {
         history::purge_document_body_history(&transaction, request)?;
         transaction.commit()?;
         Ok(())
+    }
+
+    async fn get_history_compaction_policy(
+        &self,
+        workspace_id: &str,
+        repo_relative_path: &str,
+    ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+        let connection = self.connection.lock().expect("sqlite mutex poisoned");
+        history::get_history_compaction_policy(&connection, workspace_id, repo_relative_path)
+    }
+
+    async fn set_history_compaction_policy(
+        &self,
+        request: &SetHistoryCompactionPolicyRequest,
+    ) -> Result<(), StoreError> {
+        let mut connection = self.connection.lock().expect("sqlite mutex poisoned");
+        let transaction = connection.transaction()?;
+        history::set_history_compaction_policy(&transaction, request)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    async fn clear_history_compaction_policy(
+        &self,
+        request: &ClearHistoryCompactionPolicyRequest,
+    ) -> Result<bool, StoreError> {
+        let mut connection = self.connection.lock().expect("sqlite mutex poisoned");
+        let transaction = connection.transaction()?;
+        let removed = history::clear_history_compaction_policy(&transaction, request)?;
+        transaction.commit()?;
+        Ok(removed)
     }
 }
 

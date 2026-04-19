@@ -9,11 +9,12 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
-    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
+    GetHistoryCompactionPolicyResponse, MoveDocumentRequest,
+    PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
-    UpdateDocumentRequest,
+    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest, UpdateDocumentRequest,
 };
 
 use super::StoreError;
@@ -90,4 +91,17 @@ pub trait WorkspaceStore: Send + Sync {
         &self,
         request: &PurgeDocumentBodyHistoryRequest,
     ) -> Result<(), StoreError>;
+    async fn get_history_compaction_policy(
+        &self,
+        workspace_id: &str,
+        repo_relative_path: &str,
+    ) -> Result<GetHistoryCompactionPolicyResponse, StoreError>;
+    async fn set_history_compaction_policy(
+        &self,
+        request: &SetHistoryCompactionPolicyRequest,
+    ) -> Result<(), StoreError>;
+    async fn clear_history_compaction_policy(
+        &self,
+        request: &ClearHistoryCompactionPolicyRequest,
+    ) -> Result<bool, StoreError>;
 }

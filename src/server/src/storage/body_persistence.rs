@@ -15,8 +15,9 @@ use super::body_state::{
     RetainedBodyHistoryPayload, YrsTextCheckpoint, body_state_from_snapshot, upsert_body_state,
 };
 use super::history::{
-    FileBodyRevision, file_append_body_revision, file_read_body_revisions, insert_body_revision_tx,
-    latest_checkpoint_anchor_seq,
+    FileBodyRevision, file_append_body_revision, file_enforce_history_compaction_policy,
+    file_read_body_revisions, insert_body_revision_tx, latest_checkpoint_anchor_seq,
+    postgres_enforce_history_compaction_policy,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -173,7 +174,8 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
                 payload,
                 timestamp_ms,
             ),
-        )
+        )?;
+        file_enforce_history_compaction_policy(self.state_dir, self.workspace_id, document_id)
     }
 }
 
@@ -264,6 +266,11 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
                 payload,
                 timestamp_ms,
             ),
+        )?;
+        crate::storage::sqlite::history::enforce_history_compaction_policy(
+            self.transaction,
+            self.workspace_id,
+            document_id,
         )
     }
 }
@@ -444,6 +451,8 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
             sync_postgres_checkpoint_metadata(self.transaction, self.workspace_id, document_id)
                 .await?;
         }
+        postgres_enforce_history_compaction_policy(self.transaction, self.workspace_id, document_id)
+            .await?;
         Ok(())
     }
 }

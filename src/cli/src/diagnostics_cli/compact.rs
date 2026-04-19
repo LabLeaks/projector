@@ -1,70 +1,73 @@
 /**
 @module PROJECTOR.EDGE.COMPACT_CLI
-Owns repo-local retained-history compaction policy reporting and override management for one file or folder path.
+Owns server-backed retained-history compaction policy reporting and override management for one file or folder path.
 */
 // @fileimplements PROJECTOR.EDGE.COMPACT_CLI
 use std::error::Error;
 use std::path::PathBuf;
 
 use projector_domain::HistoryCompactionPolicy;
-use projector_runtime::{
-    FileRepoSyncConfigStore, HistoryCompactionPolicySource, ResolvedHistoryCompactionPolicy,
-};
+use projector_runtime::{HttpTransport, Transport};
 
 use crate::cli_support::{normalize_projection_relative_path, repo_root};
+use crate::sync_entry_cli::{
+    load_sync_targets_with_profiles, resolve_sync_target_for_requested_path,
+    workspace_binding_for_target,
+};
 
 struct CompactArgs {
     repo_relative_path: PathBuf,
     revisions: Option<usize>,
     frequency: Option<usize>,
-    clear: bool,
+    inherit: bool,
 }
 
 pub(crate) fn run_compact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let compact_args = parse_compact_args(&args)?;
     let repo_root = repo_root()?;
-    let store = FileRepoSyncConfigStore::new(&repo_root);
+    let sync_targets = load_sync_targets_with_profiles(&repo_root)?;
+    let (target, _, _) =
+        resolve_sync_target_for_requested_path(&compact_args.repo_relative_path, &sync_targets)?;
+    let binding = workspace_binding_for_target(target, &sync_targets)?;
+    let server_addr = binding
+        .server_addr
+        .as_deref()
+        .ok_or("compact requires a server-bound sync entry")?;
+    let mut transport = HttpTransport::new(format!("http://{server_addr}"));
 
-    if compact_args.clear {
-        let removed = store.remove_history_compaction_policy(&compact_args.repo_relative_path)?;
+    if compact_args.inherit {
+        let removed =
+            transport.clear_history_compaction_policy(&binding, &compact_args.repo_relative_path)?;
         println!(
             "compact_policy: {}",
-            if removed { "cleared" } else { "no_override" }
+            if removed { "inherited" } else { "already_inherited" }
         );
-        print_effective_policy(
-            &compact_args.repo_relative_path,
-            &store.resolve_history_compaction_policy(&compact_args.repo_relative_path)?,
-        );
+        print_effective_policy(&compact_args.repo_relative_path, &mut transport, &binding)?;
         return Ok(());
     }
 
     if let (Some(revisions), Some(frequency)) = (compact_args.revisions, compact_args.frequency) {
-        store.upsert_history_compaction_policy(
+        transport.set_history_compaction_policy(
+            &binding,
             &compact_args.repo_relative_path,
-            HistoryCompactionPolicy {
+            &HistoryCompactionPolicy {
                 revisions,
                 frequency,
             },
         )?;
         println!("compact_policy: saved");
-        print_effective_policy(
-            &compact_args.repo_relative_path,
-            &store.resolve_history_compaction_policy(&compact_args.repo_relative_path)?,
-        );
+        print_effective_policy(&compact_args.repo_relative_path, &mut transport, &binding)?;
         return Ok(());
     }
 
-    print_effective_policy(
-        &compact_args.repo_relative_path,
-        &store.resolve_history_compaction_policy(&compact_args.repo_relative_path)?,
-    );
+    print_effective_policy(&compact_args.repo_relative_path, &mut transport, &binding)?;
     Ok(())
 }
 
 fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
     let mut revisions = None;
     let mut frequency = None;
-    let mut clear = false;
+    let mut inherit = false;
     let mut repo_relative_path = None;
     let mut idx = 0;
     while idx < args.len() {
@@ -85,7 +88,7 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
                         .parse::<usize>()?,
                 );
             }
-            "--clear" => clear = true,
+            "--inherit" => inherit = true,
             other => {
                 if repo_relative_path.is_some() {
                     return Err(format!("unexpected extra compact argument: {other}").into());
@@ -98,8 +101,8 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
 
     let repo_relative_path =
         repo_relative_path.ok_or("compact requires a repo-relative path argument")?;
-    if clear && (revisions.is_some() || frequency.is_some()) {
-        return Err("compact does not accept --clear with --revisions or --frequency".into());
+    if inherit && (revisions.is_some() || frequency.is_some()) {
+        return Err("compact does not accept --inherit with --revisions or --frequency".into());
     }
     if revisions.is_some() ^ frequency.is_some() {
         return Err("compact requires both --revisions and --frequency together".into());
@@ -115,30 +118,25 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
         repo_relative_path,
         revisions,
         frequency,
-        clear,
+        inherit,
     })
 }
 
 fn print_effective_policy(
     repo_relative_path: &std::path::Path,
-    resolved: &ResolvedHistoryCompactionPolicy,
-) {
+    transport: &mut HttpTransport,
+    binding: &dyn projector_domain::SyncContext,
+) -> Result<(), Box<dyn Error>> {
+    let (policy, source_kind, source_path) =
+        transport.get_history_compaction_policy(binding, repo_relative_path)?;
     println!("path: {}", repo_relative_path.display());
     println!(
         "effective_policy: revisions={} frequency={}",
-        resolved.policy.revisions, resolved.policy.frequency
+        policy.revisions, policy.frequency
     );
-    match &resolved.source {
-        HistoryCompactionPolicySource::Default => {
-            println!("policy_source: default");
-        }
-        HistoryCompactionPolicySource::PathOverride { repo_relative_path } => {
-            println!("policy_source: path_override");
-            println!("source_path: {}", repo_relative_path.display());
-        }
-        HistoryCompactionPolicySource::AncestorOverride { repo_relative_path } => {
-            println!("policy_source: ancestor_override");
-            println!("source_path: {}", repo_relative_path.display());
-        }
+    println!("policy_source: {source_kind}");
+    if let Some(source_path) = source_path {
+        println!("source_path: {source_path}");
     }
+    Ok(())
 }

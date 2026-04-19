@@ -7,11 +7,12 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
-    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
+    GetHistoryCompactionPolicyResponse, MoveDocumentRequest,
+    PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
-    UpdateDocumentRequest,
+    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest, UpdateDocumentRequest,
 };
 use std::path::PathBuf;
 use tokio::sync::Mutex;
@@ -26,6 +27,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0004_sync_entry_metadata.sql"),
     include_str!("../../migrations/0005_body_storage_kinds.sql"),
     include_str!("../../migrations/0006_body_history_checkpoint_anchors.sql"),
+    include_str!("../../migrations/0007_history_compaction_policies.sql"),
 ];
 
 pub struct PostgresWorkspaceStore {
@@ -240,6 +242,42 @@ impl WorkspaceStore for PostgresWorkspaceStore {
         let mut client = self.client.lock().await;
         let transaction = client.transaction().await?;
         let result = history::postgres_purge_document_body_history(&transaction, request).await;
+        if result.is_ok() {
+            transaction.commit().await?;
+        }
+        result
+    }
+
+    async fn get_history_compaction_policy(
+        &self,
+        workspace_id: &str,
+        repo_relative_path: &str,
+    ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+        let client = self.client.lock().await;
+        history::postgres_get_history_compaction_policy(&client, workspace_id, repo_relative_path)
+            .await
+    }
+
+    async fn set_history_compaction_policy(
+        &self,
+        request: &SetHistoryCompactionPolicyRequest,
+    ) -> Result<(), StoreError> {
+        let mut client = self.client.lock().await;
+        let transaction = client.transaction().await?;
+        let result = history::postgres_set_history_compaction_policy(&transaction, request).await;
+        if result.is_ok() {
+            transaction.commit().await?;
+        }
+        result
+    }
+
+    async fn clear_history_compaction_policy(
+        &self,
+        request: &ClearHistoryCompactionPolicyRequest,
+    ) -> Result<bool, StoreError> {
+        let mut client = self.client.lock().await;
+        let transaction = client.transaction().await?;
+        let result = history::postgres_clear_history_compaction_policy(&transaction, request).await;
         if result.is_ok() {
             transaction.commit().await?;
         }
