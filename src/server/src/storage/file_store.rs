@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRevision,
     DocumentId, DocumentPathRevision, MoveDocumentRequest, ProvenanceEvent,
-    PurgeDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
+    ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
     SyncEntryKind, SyncEntrySummary, UpdateDocumentRequest,
 };
@@ -166,6 +167,13 @@ impl WorkspaceStore for FileWorkspaceStore {
         request: &RestoreDocumentBodyRevisionRequest,
     ) -> Result<(), StoreError> {
         bodies::file_restore_document_body_revision(&self.state_dir, request)
+    }
+
+    async fn redact_document_body_history(
+        &self,
+        request: &RedactDocumentBodyHistoryRequest,
+    ) -> Result<(), StoreError> {
+        history::file_redact_document_body_history(&self.state_dir, request)
     }
 
     async fn purge_document_body_history(

@@ -16,6 +16,7 @@ pub enum ProvenanceEventKind {
     DocumentMoved,
     DocumentUpdated,
     DocumentDeleted,
+    DocumentHistoryRedacted,
     DocumentHistoryPurged,
 }
 

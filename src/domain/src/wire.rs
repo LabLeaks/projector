@@ -165,6 +165,14 @@ pub struct PurgeDocumentBodyHistoryRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RedactDocumentBodyHistoryRequest {
+    pub workspace_id: String,
+    pub actor_id: String,
+    pub document_id: String,
+    pub exact_text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ListPathRevisionsRequest {
     pub workspace_id: String,
     pub document_id: String,

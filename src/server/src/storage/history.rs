@@ -28,8 +28,10 @@ use super::workspaces::workspace_dir;
 use projector_domain::{
     BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathRevision,
     ManifestEntry, ManifestState, ProvenanceEvent, ProvenanceEventKind,
-    PurgeDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
 };
+
+const HISTORY_REDACTION_MARKER: &str = "[REDACTED]";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FileBodyRevision {
@@ -115,6 +117,20 @@ impl FileBodyRevision {
             self.history_kind,
             self.timestamp_ms,
         )
+    }
+
+    pub(crate) fn redacted(&self, exact_text: &str) -> Result<Option<Self>, StoreError> {
+        let redacted = FULL_TEXT_BODY_MODEL
+            .redact_history_payload(&self.retained_history(), exact_text, HISTORY_REDACTION_MARKER)
+            .map_err(StoreError::new)?;
+        Ok(redacted.map(|payload| {
+            let mut redacted = self.clone();
+            redacted.history_kind = payload.kind();
+            redacted.base_text = payload.base_text().to_owned();
+            redacted.body_text = payload.storage_payload().to_owned();
+            redacted.conflicted = payload.conflicted();
+            redacted
+        }))
     }
 }
 
@@ -279,6 +295,61 @@ pub(crate) fn file_purge_document_body_history(
                 relative_path.as_deref(),
             ),
             kind: ProvenanceEventKind::DocumentHistoryPurged,
+        },
+    )?;
+    Ok(())
+}
+
+pub(crate) fn file_redact_document_body_history(
+    state_dir: &Path,
+    request: &RedactDocumentBodyHistoryRequest,
+) -> Result<(), StoreError> {
+    let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
+    let mut matched = 0usize;
+    for revision in revisions.iter_mut() {
+        if revision.document_id != request.document_id {
+            continue;
+        }
+        if let Some(redacted) = revision.redacted(&request.exact_text)? {
+            *revision = redacted;
+            matched += 1;
+        }
+    }
+    if matched == 0 {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history matching {:?} in workspace {}",
+            request.document_id, request.exact_text, request.workspace_id
+        )));
+    }
+    let encoded =
+        serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
+    fs::write(file_body_revisions_path(state_dir, &request.workspace_id), encoded)?;
+
+    let current_snapshot = file_read_workspace_snapshot(state_dir, &request.workspace_id)?;
+    let live_entry = current_snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| !entry.deleted && entry.document_id.as_str() == request.document_id);
+    let mount_relative_path = live_entry.map(|entry| entry.mount_relative_path.display().to_string());
+    let relative_path = live_entry.map(|entry| entry.relative_path.display().to_string());
+    let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
+    file_append_workspace_event(
+        state_dir,
+        &request.workspace_id,
+        ProvenanceEvent {
+            cursor: event_cursor,
+            timestamp_ms: current_time_ms(),
+            actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
+            document_id: Some(DocumentId::new(request.document_id.clone())),
+            mount_relative_path: mount_relative_path.clone(),
+            relative_path: relative_path.clone(),
+            summary: redact_history_summary(
+                request.document_id.as_str(),
+                mount_relative_path.as_deref(),
+                relative_path.as_deref(),
+            ),
+            kind: ProvenanceEventKind::DocumentHistoryRedacted,
         },
     )?;
     Ok(())
@@ -659,6 +730,102 @@ pub(crate) async fn postgres_purge_document_body_history(
     Ok(())
 }
 
+pub(crate) async fn postgres_redact_document_body_history(
+    transaction: &tokio_postgres::Transaction<'_>,
+    request: &RedactDocumentBodyHistoryRequest,
+) -> Result<(), StoreError> {
+    let rows = transaction
+        .query(
+            "select seq, actor_id, document_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted, \
+                (extract(epoch from created_at) * 1000)::bigint as timestamp_ms \
+             from document_body_revisions \
+             where workspace_id = $1 and document_id = $2 \
+             order by seq asc",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let revisions = rows
+        .into_iter()
+        .map(|row| {
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok(FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: 0,
+                actor_id: row.get::<_, String>("actor_id"),
+                document_id: row.get::<_, String>("document_id"),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind: kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+
+    let mut matched = 0usize;
+    for revision in revisions {
+        let Some(redacted) = revision.redacted(&request.exact_text)? else {
+            continue;
+        };
+        transaction
+            .execute(
+                "update document_body_revisions \
+                 set history_kind = $3, base_text = $4, body_text = $5, conflicted = $6 \
+                 where workspace_id = $1 and seq = $2",
+                &[
+                    &request.workspace_id,
+                    &(redacted.seq as i64),
+                    &redacted.history_kind.as_str(),
+                    &redacted.base_text,
+                    &redacted.body_text,
+                    &redacted.conflicted,
+                ],
+            )
+            .await?;
+        matched += 1;
+    }
+    if matched == 0 {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history matching {:?} in workspace {}",
+            request.document_id, request.exact_text, request.workspace_id
+        )));
+    }
+    let live_path = transaction
+        .query_opt(
+            "select mount_path, relative_path from document_paths \
+             where workspace_id = $1 and document_id = $2 and deleted = false",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let mount_relative_path = live_path
+        .as_ref()
+        .map(|row| row.get::<_, String>("mount_path"));
+    let relative_path = live_path
+        .as_ref()
+        .map(|row| row.get::<_, String>("relative_path"));
+    insert_event_tx(
+        transaction,
+        &request.workspace_id,
+        &request.actor_id,
+        Some(&request.document_id),
+        mount_relative_path.as_deref(),
+        relative_path.as_deref(),
+        ProvenanceEventKind::DocumentHistoryRedacted,
+        &redact_history_summary(
+            request.document_id.as_str(),
+            mount_relative_path.as_deref(),
+            relative_path.as_deref(),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
 fn purge_history_summary(
     document_id: &str,
     mount_relative_path: Option<&str>,
@@ -670,6 +837,20 @@ fn purge_history_summary(
         }
         (Some(mount), _) => format!("purged retained body history for {mount}"),
         _ => format!("purged retained body history for document {document_id}"),
+    }
+}
+
+fn redact_history_summary(
+    document_id: &str,
+    mount_relative_path: Option<&str>,
+    relative_path: Option<&str>,
+) -> String {
+    match (mount_relative_path, relative_path) {
+        (Some(mount), Some(relative)) if !relative.is_empty() => {
+            format!("redacted retained body history for {mount}/{relative}")
+        }
+        (Some(mount), _) => format!("redacted retained body history for {mount}"),
+        _ => format!("redacted retained body history for document {document_id}"),
     }
 }
 

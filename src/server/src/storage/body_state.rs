@@ -44,6 +44,12 @@ pub(crate) trait BodyStateModel {
         materialized_text: impl Into<String>,
         conflicted: bool,
     ) -> RetainedBodyHistoryPayload;
+    fn redact_history_payload(
+        &self,
+        payload: &RetainedBodyHistoryPayload,
+        exact_text: &str,
+        replacement_text: &str,
+    ) -> Result<Option<RetainedBodyHistoryPayload>, String>;
     fn created_history(&self, state: &CanonicalBodyState) -> RetainedBodyHistoryPayload;
     fn restored_history(
         &self,
@@ -654,6 +660,43 @@ impl BodyStateModel for FullTextBodyModel {
         }
     }
 
+    fn redact_history_payload(
+        &self,
+        payload: &RetainedBodyHistoryPayload,
+        exact_text: &str,
+        replacement_text: &str,
+    ) -> Result<Option<RetainedBodyHistoryPayload>, String> {
+        if exact_text.is_empty() {
+            return Err("exact redaction text must not be empty".to_owned());
+        }
+
+        let redacted_base = payload.base_text().replace(exact_text, replacement_text);
+        let redacted_body = payload.materialized_text().replace(exact_text, replacement_text);
+        if redacted_base == payload.base_text() && redacted_body == payload.materialized_text() {
+            return Ok(None);
+        }
+
+        let redacted = match payload.kind() {
+            RetainedBodyHistoryKind::FullTextRevisionV1 => {
+                RetainedBodyHistoryPayload::full_text_revision_v1(
+                    redacted_base,
+                    redacted_body,
+                    payload.conflicted(),
+                )
+            }
+            RetainedBodyHistoryKind::FullTextCheckpointV1 => {
+                RetainedBodyHistoryPayload::full_text_checkpoint_v1(redacted_base, redacted_body)
+            }
+            RetainedBodyHistoryKind::YrsTextCheckpointV1 => {
+                self.checkpoint_history(redacted_base, redacted_body)
+            }
+            RetainedBodyHistoryKind::YrsTextUpdateV1 => {
+                self.history_from_stored_revision(redacted_base, redacted_body, false)
+            }
+        };
+        Ok(Some(redacted))
+    }
+
     fn created_history(&self, state: &CanonicalBodyState) -> RetainedBodyHistoryPayload {
         self.checkpoint_history("", state.materialized_text())
     }
@@ -1036,6 +1079,22 @@ mod tests {
         );
         assert_eq!(update.base_text(), "");
         assert_eq!(update.materialized_text(), "");
+    }
+
+    #[test]
+    fn redact_history_payload_rewrites_yrs_history_without_losing_kind() {
+        let model = FullTextBodyModel;
+        let payload =
+            model.history_from_stored_revision("before SECRET\n", "after SECRET\n", false);
+
+        let redacted = model
+            .redact_history_payload(&payload, "SECRET", "[REDACTED]")
+            .expect("redact retained payload")
+            .expect("retained payload should change");
+
+        assert_eq!(redacted.kind(), RetainedBodyHistoryKind::YrsTextUpdateV1);
+        assert_eq!(redacted.base_text(), "before [REDACTED]\n");
+        assert_eq!(redacted.materialized_text(), "after [REDACTED]\n");
     }
 
     #[test]

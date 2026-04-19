@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRevision,
     DocumentId, DocumentPathRevision, MoveDocumentRequest, ProvenanceEvent,
-    PurgeDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
+    ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
     SyncEntryKind, SyncEntrySummary, UpdateDocumentRequest,
 };
@@ -196,6 +197,19 @@ impl WorkspaceStore for PostgresWorkspaceStore {
         let mut client = self.client.lock().await;
         let transaction = client.transaction().await?;
         let result = bodies::postgres_restore_document_body_revision(&transaction, request).await;
+        if result.is_ok() {
+            transaction.commit().await?;
+        }
+        result
+    }
+
+    async fn redact_document_body_history(
+        &self,
+        request: &RedactDocumentBodyHistoryRequest,
+    ) -> Result<(), StoreError> {
+        let mut client = self.client.lock().await;
+        let transaction = client.transaction().await?;
+        let result = history::postgres_redact_document_body_history(&transaction, request).await;
         if result.is_ok() {
             transaction.commit().await?;
         }

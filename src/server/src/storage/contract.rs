@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use projector_domain::{
     BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRevision,
     DocumentId, DocumentPathRevision, MoveDocumentRequest, ProvenanceEvent,
-    PurgeDocumentBodyHistoryRequest, ResolveHistoricalPathRequest, RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
+    ResolveHistoricalPathRequest, RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
     SyncEntryKind, SyncEntrySummary, UpdateDocumentRequest,
 };
 
@@ -70,6 +71,10 @@ pub trait WorkspaceStore: Send + Sync {
     async fn restore_document_body_revision(
         &self,
         request: &RestoreDocumentBodyRevisionRequest,
+    ) -> Result<(), StoreError>;
+    async fn redact_document_body_history(
+        &self,
+        request: &RedactDocumentBodyHistoryRequest,
     ) -> Result<(), StoreError>;
     async fn purge_document_body_history(
         &self,
