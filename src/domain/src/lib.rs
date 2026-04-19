@@ -11,7 +11,10 @@ pub use binding::{
 pub use ids::{ActorId, DocumentId, WorkspaceId};
 pub use manifest::{DocumentKind, ManifestEntry, ManifestState};
 pub use provenance::{ProvenanceEvent, ProvenanceEventKind};
-pub use sync_config::{RepoSyncConfig, RepoSyncEntry, SyncEntryKind};
+pub use sync_config::{
+    HistoryCompactionPolicy, HistoryCompactionPolicyOverride, RepoSyncConfig, RepoSyncEntry,
+    SyncEntryKind,
+};
 pub use wire::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,

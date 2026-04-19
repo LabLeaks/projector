@@ -96,6 +96,7 @@ mod tests {
                     kind: SyncEntryKind::Directory,
                 },
             ],
+            history_compaction_policies: vec![],
         };
 
         let targets = derive_sync_targets(&repo_root, &config, None).expect("derive targets");

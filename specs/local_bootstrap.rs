@@ -12,9 +12,10 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use projector_domain::{
     ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyPurgeMatch,
     DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
-    DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest,
-    ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse, ManifestEntry,
-    ManifestState, PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
+    DocumentPathRevision, HistoryCompactionPolicy, HistoryCompactionPolicyOverride,
+    ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
+    ListPathRevisionsRequest, ListPathRevisionsResponse, ManifestEntry, ManifestState,
+    PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
     PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
     ProjectionRoots, ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
     ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
@@ -457,6 +458,7 @@ fn run_legacy_sync_with_env(
                     kind: SyncEntryKind::Directory,
                 })
                 .collect(),
+            history_compaction_policies: vec![],
         };
         sync_store
             .save(&sync_config)
@@ -913,6 +915,7 @@ fn clone_sync_config_for_repo(source_repo: &Path, dest_repo: &Path, actor_id: &s
                 entry
             })
             .collect(),
+        history_compaction_policies: config.history_compaction_policies,
     };
     FileRepoSyncConfigStore::new(dest_repo)
         .save(&cloned)
@@ -939,6 +942,7 @@ fn save_sync_config_for_binding(repo_root: &Path, binding: &CheckoutBinding) {
                 kind,
             })
             .collect(),
+        history_compaction_policies: vec![],
     };
     FileRepoSyncConfigStore::new(repo_root)
         .save(&config)
@@ -1686,6 +1690,7 @@ fn doctor_reports_sync_entry_problems() {
                 remote_relative_path: PathBuf::from("private/note.txt"),
                 kind: SyncEntryKind::File,
             }],
+            history_compaction_policies: vec![],
         })
         .expect("save sync config");
     FileRuntimeStatusStore::new(repo.join(".projector/status.txt"))
@@ -1743,6 +1748,7 @@ fn doctor_reports_runtime_and_sync_issue_state() {
                 remote_relative_path: PathBuf::from("private"),
                 kind: SyncEntryKind::Directory,
             }],
+            history_compaction_policies: vec![],
         })
         .expect("save sync config");
     FileRuntimeStatusStore::new(repo.join(".projector/status.txt"))
@@ -4930,6 +4936,211 @@ fn projector_purge_uses_tty_browser_to_preview_clearable_revisions() {
 
     let history = run_projector(&repo, &["history", "private/briefs/cli-purge-browser.html"]);
     assert!(history.contains("updated revision"));
+}
+
+// @verifies PROJECTOR.CLI.COMPACT.SETS_PATH_POLICY
+#[test]
+fn compact_sets_path_scoped_history_policy_override() {
+    let repo = temp_repo("cli-compact-set");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+
+    let output = run_projector(
+        &repo,
+        &[
+            "compact",
+            "private",
+            "--revisions",
+            "12",
+            "--frequency",
+            "4",
+        ],
+    );
+
+    assert!(output.contains("compact_policy: saved"));
+    assert!(output.contains("path: private"));
+    assert!(output.contains("effective_policy: revisions=12 frequency=4"));
+    assert!(output.contains("policy_source: path_override"));
+    assert!(output.contains("source_path: private"));
+
+    let config = FileRepoSyncConfigStore::new(&repo)
+        .load()
+        .expect("load compact config");
+    assert_eq!(
+        config.history_compaction_policies,
+        vec![HistoryCompactionPolicyOverride {
+            repo_relative_path: PathBuf::from("private"),
+            policy: HistoryCompactionPolicy {
+                revisions: 12,
+                frequency: 4,
+            },
+        }]
+    );
+}
+
+// @verifies PROJECTOR.HISTORY.COMPACTION_POLICY
+#[test]
+fn compact_history_policy_persists_repo_local_override() {
+    let repo = temp_repo("compact-history-policy");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private",
+            "--revisions",
+            "12",
+            "--frequency",
+            "4",
+        ],
+    );
+
+    let config = FileRepoSyncConfigStore::new(&repo).load().expect("load compact config");
+    assert_eq!(
+        config.history_compaction_policies,
+        vec![HistoryCompactionPolicyOverride {
+            repo_relative_path: PathBuf::from("private"),
+            policy: HistoryCompactionPolicy {
+                revisions: 12,
+                frequency: 4,
+            },
+        }]
+    );
+}
+
+// @verifies PROJECTOR.CLI.COMPACT.REPORTS_EFFECTIVE_POLICY
+#[test]
+fn compact_reports_default_inherited_and_exact_path_policy_sources() {
+    let repo = temp_repo("cli-compact-report");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+
+    let default_output = run_projector(&repo, &["compact", "notes/today.html"]);
+    assert!(default_output.contains("path: notes/today.html"));
+    assert!(default_output.contains("effective_policy: revisions=100 frequency=10"));
+    assert!(default_output.contains("policy_source: default"));
+
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private",
+            "--revisions",
+            "12",
+            "--frequency",
+            "4",
+        ],
+    );
+    let inherited_output = run_projector(&repo, &["compact", "private/notes/today.html"]);
+    assert!(inherited_output.contains("path: private/notes/today.html"));
+    assert!(inherited_output.contains("effective_policy: revisions=12 frequency=4"));
+    assert!(inherited_output.contains("policy_source: ancestor_override"));
+    assert!(inherited_output.contains("source_path: private"));
+
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private/notes/today.html",
+            "--revisions",
+            "3",
+            "--frequency",
+            "2",
+        ],
+    );
+    let exact_output = run_projector(&repo, &["compact", "private/notes/today.html"]);
+    assert!(exact_output.contains("effective_policy: revisions=3 frequency=2"));
+    assert!(exact_output.contains("policy_source: path_override"));
+    assert!(exact_output.contains("source_path: private/notes/today.html"));
+}
+
+// @verifies PROJECTOR.HISTORY.COMPACTION_POLICY_INHERITANCE
+#[test]
+fn compact_history_policy_inheritance_uses_nearest_override() {
+    let repo = temp_repo("compact-history-inheritance");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private",
+            "--revisions",
+            "12",
+            "--frequency",
+            "4",
+        ],
+    );
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private/notes/today.html",
+            "--revisions",
+            "3",
+            "--frequency",
+            "2",
+        ],
+    );
+
+    let exact_output = run_projector(&repo, &["compact", "private/notes/today.html"]);
+    assert!(exact_output.contains("effective_policy: revisions=3 frequency=2"));
+    assert!(exact_output.contains("policy_source: path_override"));
+    assert!(exact_output.contains("source_path: private/notes/today.html"));
+
+    let inherited_output = run_projector(&repo, &["compact", "private/notes/tomorrow.html"]);
+    assert!(inherited_output.contains("effective_policy: revisions=12 frequency=4"));
+    assert!(inherited_output.contains("policy_source: ancestor_override"));
+    assert!(inherited_output.contains("source_path: private"));
+}
+
+// @verifies PROJECTOR.CLI.COMPACT.CLEARS_PATH_OVERRIDE
+#[test]
+fn compact_clear_removes_local_override_and_falls_back_to_ancestor() {
+    let repo = temp_repo("cli-compact-clear");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private",
+            "--revisions",
+            "12",
+            "--frequency",
+            "4",
+        ],
+    );
+    run_projector(
+        &repo,
+        &[
+            "compact",
+            "private/notes/today.html",
+            "--revisions",
+            "3",
+            "--frequency",
+            "2",
+        ],
+    );
+
+    let output = run_projector(&repo, &["compact", "private/notes/today.html", "--clear"]);
+    assert!(output.contains("compact_policy: cleared"));
+    assert!(output.contains("effective_policy: revisions=12 frequency=4"));
+    assert!(output.contains("policy_source: ancestor_override"));
+    assert!(output.contains("source_path: private"));
+
+    let config = FileRepoSyncConfigStore::new(&repo)
+        .load()
+        .expect("load compact config");
+    assert_eq!(
+        config.history_compaction_policies,
+        vec![HistoryCompactionPolicyOverride {
+            repo_relative_path: PathBuf::from("private"),
+            policy: HistoryCompactionPolicy {
+                revisions: 12,
+                frequency: 4,
+            },
+        }]
+    );
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR

@@ -28,7 +28,9 @@ pub use machine_daemon::{MachineDaemonOptions, run_machine_daemon};
 pub use materializer::{MaterializationPlan, Materializer, ProjectionMaterializer};
 pub use provenance::{FileProvenanceLog, StoredEvent};
 pub use status::{FileRuntimeStatusStore, RuntimeStatus};
-pub use sync_config_store::FileRepoSyncConfigStore;
+pub use sync_config_store::{
+    FileRepoSyncConfigStore, HistoryCompactionPolicySource, ResolvedHistoryCompactionPolicy,
+};
 pub use sync_issue::{SyncIssue, SyncIssueDisposition, classify_sync_issue};
 pub use sync_targets::{derive_sync_targets, load_sync_targets};
 pub use transport::{HttpTransport, Transport};

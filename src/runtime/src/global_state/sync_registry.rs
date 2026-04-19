@@ -130,6 +130,7 @@ mod tests {
                     kind: SyncEntryKind::File,
                 },
             ],
+            history_compaction_policies: vec![],
         }
     }
 

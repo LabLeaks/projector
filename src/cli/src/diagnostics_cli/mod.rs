@@ -1,3 +1,4 @@
+mod compact;
 /**
 @module PROJECTOR.EDGE.DIAGNOSTICS_CLI
 Owns operational status, doctor, log, history, and restore surfaces, including the emergency history and PITR flows exposed through the CLI.
@@ -6,6 +7,7 @@ Owns operational status, doctor, log, history, and restore surfaces, including t
 mod history_restore;
 mod observability;
 
+pub(crate) use compact::run_compact;
 pub(crate) use history_restore::{
     resolve_live_entry_for_repo_relative_path, run_history, run_purge, run_redact, run_restore,
 };

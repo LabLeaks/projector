@@ -30,11 +30,9 @@ Projector retains append-only document path history for create, move, and delete
 Projector renders readable document history as retained text snapshots and diffs over retained body checkpoints instead of exposing raw CRDT update history directly.
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY
-@planned
 Projector can attach a path-scoped history compaction policy that keeps a recent window of document body history at full fidelity and older document body history as sparser retained checkpoints.
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY_INHERITANCE
-@planned
 Projector resolves the effective history compaction policy for one file from the nearest configured file or ancestor-folder policy override.
 
 @spec PROJECTOR.HISTORY.CONTENT_REDACTION

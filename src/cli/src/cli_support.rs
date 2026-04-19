@@ -11,7 +11,7 @@ use projector_runtime::{
 
 pub(crate) fn print_usage() {
     println!(
-        "Usage: projector <sync <start|stop|status>|connect [--id NAME] [--server host:port] [--ssh user@host]|connect status|disconnect <id> [--yes]|deploy [--profile NAME] [--ssh user@host] [--server-addr host:port] [--remote-dir PATH] [--sqlite-path PATH] [--listen-addr host:port] [--yes]|add [--force] [--profile ID] <repo-relative-path>|get [--profile ID] [sync-entry-id] [repo-relative-path]|remove <repo-relative-path>|rm <repo-relative-path>|doctor|status|log|history [--cursor N]|restore [--confirm] <repo-relative-path>|redact [--confirm] <exact-text> <repo-relative-path>|purge [--confirm] <repo-relative-path>>"
+        "Usage: projector <sync <start|stop|status>|connect [--id NAME] [--server host:port] [--ssh user@host]|connect status|disconnect <id> [--yes]|deploy [--profile NAME] [--ssh user@host] [--server-addr host:port] [--remote-dir PATH] [--sqlite-path PATH] [--listen-addr host:port] [--yes]|add [--force] [--profile ID] <repo-relative-path>|get [--profile ID] [sync-entry-id] [repo-relative-path]|remove <repo-relative-path>|rm <repo-relative-path>|doctor|status|log|history [--cursor N]|compact <repo-relative-path> [--revisions N --frequency N|--clear]|restore [--confirm] <repo-relative-path>|redact [--confirm] <exact-text> <repo-relative-path>|purge [--confirm] <repo-relative-path>>"
     );
 }
 

@@ -16,6 +16,18 @@ pub enum SyncEntryKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HistoryCompactionPolicy {
+    pub revisions: usize,
+    pub frequency: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HistoryCompactionPolicyOverride {
+    pub repo_relative_path: PathBuf,
+    pub policy: HistoryCompactionPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RepoSyncEntry {
     pub entry_id: String,
     pub workspace_id: WorkspaceId,
@@ -28,5 +40,8 @@ pub struct RepoSyncEntry {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RepoSyncConfig {
+    #[serde(default)]
     pub entries: Vec<RepoSyncEntry>,
+    #[serde(default)]
+    pub history_compaction_policies: Vec<HistoryCompactionPolicyOverride>,
 }
