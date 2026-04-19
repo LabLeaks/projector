@@ -3456,8 +3456,12 @@ fn server_lists_document_body_revisions() {
 
     let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions.len(), 2);
+    assert_eq!(revisions[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(revisions[0].checkpoint_anchor_seq, Some(1));
     assert_eq!(revisions[0].base_text, "");
     assert_eq!(revisions[0].body_text, "<p>created revision</p>\n");
+    assert_eq!(revisions[1].history_kind, "yrs_text_update_v1");
+    assert_eq!(revisions[1].checkpoint_anchor_seq, Some(1));
     assert_eq!(revisions[1].base_text, "<p>created revision</p>\n");
     assert_eq!(revisions[1].body_text, "<p>updated revision</p>\n");
     assert!(!revisions[1].conflicted);
@@ -3668,15 +3672,60 @@ fn history_renders_document_body_and_path_revisions_for_a_live_path() {
     assert!(history.contains("path: notes/archive/cli-history.html"));
     assert!(history.contains("document_id: doc-"));
     assert!(history.contains("body_revisions: 2"));
-    assert!(history.contains("base_text: \"\""));
-    assert!(history.contains("body_text: \"<p>created revision</p>\\n\""));
-    assert!(history.contains("base_text: \"<p>created revision</p>\\n\""));
-    assert!(history.contains("body_text: \"<p>updated revision</p>\\n\""));
+    assert!(history.contains("kind=yrs_text_checkpoint_v1"));
+    assert!(history.contains("kind=yrs_text_update_v1"));
+    assert!(history.contains("checkpoint_anchor_seq=1"));
+    assert!(history.contains("snapshot_text: \"<p>created revision</p>\\n\""));
+    assert!(history.contains("snapshot_text: \"<p>updated revision</p>\\n\""));
+    assert!(history.contains("--- base"));
+    assert!(history.contains("+++ snapshot"));
+    assert!(history.contains("+<p>created revision</p>"));
+    assert!(history.contains("-<p>created revision</p>"));
+    assert!(history.contains("+<p>updated revision</p>"));
     assert!(history.contains("path_revisions: 2"));
     assert!(history.contains("kind=document_created"));
     assert!(history.contains("path=private/briefs/cli-history.html"));
     assert!(history.contains("kind=document_moved"));
     assert!(history.contains("path=notes/archive/cli-history.html"));
+}
+
+// @verifies PROJECTOR.HISTORY.SNAPSHOT_DIFF_HISTORY
+#[test]
+fn history_renders_snapshot_and_diff_over_retained_body_checkpoints() {
+    let repo = temp_repo("cli-history-diff");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/cli-history-diff.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/cli-history-diff.html"),
+        "<p>updated revision</p>\n",
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let history = run_projector(&repo, &["history", "private/briefs/cli-history-diff.html"]);
+
+    assert!(history.contains("kind=yrs_text_checkpoint_v1"));
+    assert!(history.contains("kind=yrs_text_update_v1"));
+    assert!(history.contains("checkpoint_anchor_seq=1"));
+    assert!(history.contains("snapshot_text: \"<p>created revision</p>\\n\""));
+    assert!(history.contains("snapshot_text: \"<p>updated revision</p>\\n\""));
+    assert!(history.contains("--- base"));
+    assert!(history.contains("+++ snapshot"));
+    assert!(history.contains("+<p>created revision</p>"));
+    assert!(history.contains("-<p>created revision</p>"));
+    assert!(history.contains("+<p>updated revision</p>"));
 }
 
 // @verifies PROJECTOR.CLI.HISTORY.RENDERS_WORKSPACE_RECONSTRUCTION
@@ -3971,7 +4020,7 @@ fn restore_uses_tty_browser_and_applies_selected_revision_after_interactive_conf
 
     let history = run_projector(&repo, &["history", "private/briefs/restore-confirm.html"]);
     assert!(history.contains("body_revisions: 3"));
-    assert!(history.contains("body_text: \"<p>created revision</p>\\n\""));
+    assert!(history.contains("snapshot_text: \"<p>created revision</p>\\n\""));
 
     let log = run_projector(&repo, &["log"]);
     assert!(log.contains("kind=document_updated"));

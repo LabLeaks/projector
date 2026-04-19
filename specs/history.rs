@@ -27,8 +27,7 @@ When `projector restore <repo-relative-path>` runs in an interactive terminal, s
 Projector retains append-only document path history for create, move, and delete transitions rather than only current-path truth.
 
 @spec PROJECTOR.HISTORY.SNAPSHOT_DIFF_HISTORY
-@planned
-Projector can render readable document history as retained text snapshots and diffs over retained body checkpoints instead of exposing raw CRDT update history directly.
+Projector renders readable document history as retained text snapshots and diffs over retained body checkpoints instead of exposing raw CRDT update history directly.
 
 @spec PROJECTOR.HISTORY.COMPACTION_POLICY
 @planned

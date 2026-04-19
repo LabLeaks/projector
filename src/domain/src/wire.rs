@@ -124,6 +124,8 @@ pub struct DocumentBodyRevision {
     pub seq: u64,
     pub actor_id: String,
     pub document_id: String,
+    pub checkpoint_anchor_seq: Option<u64>,
+    pub history_kind: String,
     pub base_text: String,
     pub body_text: String,
     pub conflicted: bool,

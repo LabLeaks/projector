@@ -441,12 +441,16 @@ impl RetainedBodyHistoryPayload {
         seq: u64,
         actor_id: String,
         document_id: String,
+        checkpoint_anchor_seq: Option<u64>,
+        history_kind: RetainedBodyHistoryKind,
         timestamp_ms: u128,
     ) -> DocumentBodyRevision {
         DocumentBodyRevision {
             seq,
             actor_id,
             document_id,
+            checkpoint_anchor_seq,
+            history_kind: history_kind.as_str().to_owned(),
             base_text: self.base_text.clone(),
             body_text: self.materialized_text.clone(),
             conflicted: self.conflicted,

@@ -110,6 +110,8 @@ impl FileBodyRevision {
             self.seq,
             self.actor_id.clone(),
             self.document_id.clone(),
+            self.checkpoint_anchor_seq,
+            self.history_kind,
             self.timestamp_ms,
         )
     }

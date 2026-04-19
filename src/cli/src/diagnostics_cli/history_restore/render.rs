@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use projector_domain::{BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentPathRevision};
 
-use crate::restore_browser::simple_line_diff;
+use crate::restore_browser::{simple_line_diff, simple_line_diff_with_labels};
 
 pub(crate) fn format_event_path(
     mount_relative_path: Option<&str>,
@@ -24,11 +24,24 @@ pub(crate) fn format_event_path(
 
 pub(super) fn print_body_revision(revision: &DocumentBodyRevision) {
     println!(
-        "body_revision: seq={} actor={} conflicted={} timestamp_ms={}",
-        revision.seq, revision.actor_id, revision.conflicted, revision.timestamp_ms
+        "body_revision: seq={} actor={} kind={} checkpoint_anchor_seq={} conflicted={} timestamp_ms={}",
+        revision.seq,
+        revision.actor_id,
+        revision.history_kind,
+        revision
+            .checkpoint_anchor_seq
+            .map(|seq| seq.to_string())
+            .unwrap_or_else(|| "-".to_owned()),
+        revision.conflicted,
+        revision.timestamp_ms
     );
-    println!("base_text: {:?}", revision.base_text);
-    println!("body_text: {:?}", revision.body_text);
+    println!("snapshot_text: {:?}", revision.body_text);
+    println!("diff:");
+    for line in
+        simple_line_diff_with_labels("base", "snapshot", &revision.base_text, &revision.body_text)
+    {
+        println!("{line}");
+    }
 }
 
 pub(super) fn print_path_revision(revision: &DocumentPathRevision) {

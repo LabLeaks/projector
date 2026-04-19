@@ -50,17 +50,26 @@ pub(crate) fn browse_restore_revisions(
     browser.run()
 }
 
-pub(crate) fn simple_line_diff(current_text: &str, restored_text: &str) -> Vec<String> {
+pub(crate) fn simple_line_diff_with_labels(
+    current_label: &str,
+    restored_label: &str,
+    current_text: &str,
+    restored_text: &str,
+) -> Vec<String> {
     let current = split_lines_for_diff(current_text);
     let restored = split_lines_for_diff(restored_text);
     let lcs = build_lcs_table(&current, &restored);
     let mut lines = vec![
-        "--- current".to_owned(),
-        "+++ restored".to_owned(),
+        format!("--- {current_label}"),
+        format!("+++ {restored_label}"),
         "@@".to_owned(),
     ];
     lines.extend(render_lcs_diff(&current, &restored, &lcs, 0, 0));
     lines
+}
+
+pub(crate) fn simple_line_diff(current_text: &str, restored_text: &str) -> Vec<String> {
+    simple_line_diff_with_labels("current", "restored", current_text, restored_text)
 }
 
 #[derive(Clone, Debug)]
