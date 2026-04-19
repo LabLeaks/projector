@@ -8,14 +8,6 @@ v0 materializes only UTF-8 text files and directories under the configured proje
 @spec PROJECTOR.SYNC.TEXT_CONVERGENCE
 UTF-8 text files under the configured projection mounts converge across synced checkouts for the same workspace through deterministic server-side CRDT-backed text merge rather than conflict-marker rewrites on concurrent overlap.
 
-@spec PROJECTOR.SYNC.CANONICAL_CRDT_BODY_STATE
-@planned
-Projector can converge one document's shared body state through a canonical per-document CRDT while keeping repo-local files materialized as normal UTF-8 text.
-
-@spec PROJECTOR.SYNC.CRDT_UPDATE_EXCHANGE
-@planned
-Projector can synchronize document body changes as CRDT updates against checkpointed body state instead of relying on full-text overwrite attempts and three-way merge on every concurrent edit.
-
 @spec PROJECTOR.SYNC.FILE_LIFECYCLE
 The synced workspace reconciles UTF-8 text file creation, body edits, and deletion through a server-backed manifest rather than by treating local disk as the source of truth.
 

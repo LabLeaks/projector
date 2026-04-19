@@ -47,7 +47,7 @@ Projector can purge one document's retained historical body content by path with
 Projector records destructive document-history surgery durably without retaining the removed sensitive content in its audit trail.
 
 @spec PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_BODY_REVISIONS
-`POST /history/body/list` returns append-only body revisions for a document with base text, resulting body text, and conflict metadata.
+`POST /history/body/list` returns append-only body revisions for a document with base text, resulting body text, conflict metadata, and self-describing retained-history kind and checkpoint-anchor metadata.
 
 @spec PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_PATH_REVISIONS
 `POST /history/path/list` returns append-only path revisions for a document with path, delete state, and event kind.
@@ -66,10 +66,6 @@ Projector records destructive document-history surgery durably without retaining
 
 @spec PROJECTOR.SERVER.HISTORY.RESTORES_WORKSPACE_AT_CURSOR
 `POST /history/workspace/restore` applies the reconstructed live workspace state for an earlier workspace cursor as current server state.
-
-@spec PROJECTOR.SERVER.HISTORY.CHECKPOINTS_CRDT_BODY_STATE
-@planned
-Server history storage can retain checkpointed document body snapshots together with CRDT update history so older dense update runs can compact without losing readable history reconstruction.
 
 @spec PROJECTOR.SERVER.HISTORY.RENDERS_SNAPSHOT_DIFF_HISTORY
 `POST /history/body/list` returns readable base-to-snapshot diff lines for retained body revisions so clients do not need to interpret raw retained CRDT payloads directly.
