@@ -6,12 +6,13 @@ Owns file-backed remote sync-entry listing, kind inference, and preview renderin
 use std::fs;
 use std::path::Path;
 
-use projector_domain::{BootstrapSnapshot, SyncEntryKind, SyncEntrySummary};
+use projector_domain::SyncEntrySummary;
 
 use crate::storage::bodies::file_read_workspace_snapshot;
 use crate::storage::provenance::file_read_workspace_events;
 use crate::storage::{StoreError, state_workspaces_root};
 
+use super::super::{infer_sync_entry_kind, sync_entry_preview_summary};
 use super::metadata::parse_file_workspace_metadata;
 
 pub(crate) fn file_list_sync_entries(
@@ -41,7 +42,7 @@ pub(crate) fn file_list_sync_entries(
         let events = file_read_workspace_events(state_dir, &workspace_id).unwrap_or_default();
         let kind = metadata
             .entry_kind
-            .unwrap_or_else(|| infer_snapshot_kind(&snapshot));
+            .unwrap_or_else(|| infer_sync_entry_kind(&snapshot));
         entries.push(SyncEntrySummary {
             sync_entry_id: workspace_id.clone(),
             workspace_id,
@@ -49,7 +50,7 @@ pub(crate) fn file_list_sync_entries(
             kind: kind.clone(),
             source_repo_name: metadata.source_repo_name,
             last_updated_ms: events.last().map(|event| event.timestamp_ms),
-            preview: preview_summary(&snapshot, &kind),
+            preview: sync_entry_preview_summary(&snapshot, &kind),
         });
     }
 
@@ -64,50 +65,4 @@ pub(crate) fn file_list_sync_entries(
         entries.truncate(limit);
     }
     Ok(entries)
-}
-
-fn infer_snapshot_kind(snapshot: &BootstrapSnapshot) -> SyncEntryKind {
-    if snapshot
-        .manifest
-        .entries
-        .iter()
-        .any(|entry| !entry.deleted && entry.relative_path.as_os_str().is_empty())
-    {
-        SyncEntryKind::File
-    } else {
-        SyncEntryKind::Directory
-    }
-}
-
-fn preview_summary(snapshot: &BootstrapSnapshot, kind: &SyncEntryKind) -> Option<String> {
-    match kind {
-        SyncEntryKind::File => snapshot.bodies.first().map(|body| {
-            let single_line = body.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            single_line.chars().take(120).collect::<String>()
-        }),
-        SyncEntryKind::Directory => {
-            let live_count = snapshot
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.deleted)
-                .count();
-            if live_count == 0 {
-                None
-            } else if let Some(first_entry) = snapshot
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.deleted)
-                .min_by(|left, right| left.relative_path.cmp(&right.relative_path))
-            {
-                Some(format!(
-                    "{live_count} files; first={}",
-                    first_entry.relative_path.display()
-                ))
-            } else {
-                Some(format!("{live_count} files"))
-            }
-        }
-    }
 }

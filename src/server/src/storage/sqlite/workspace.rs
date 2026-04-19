@@ -11,6 +11,7 @@ use rusqlite::{Connection, params};
 
 use super::super::StoreError;
 use super::super::bodies::snapshot_subset_for_documents;
+use super::super::workspaces::{infer_sync_entry_kind, sync_entry_preview_summary};
 use super::history::{read_events_since, read_last_event_timestamp};
 use super::state::{
     SqliteWorkspaceMetadata, SqliteWorkspaceState, decode_json, load_workspace_state,
@@ -105,7 +106,7 @@ pub(super) fn list_sync_entries(
         let kind = metadata
             .entry_kind
             .clone()
-            .unwrap_or_else(|| infer_snapshot_kind(&snapshot));
+            .unwrap_or_else(|| infer_sync_entry_kind(&snapshot));
         entries.push(SyncEntrySummary {
             sync_entry_id: workspace_id.clone(),
             workspace_id: workspace_id.clone(),
@@ -117,7 +118,7 @@ pub(super) fn list_sync_entries(
             } else {
                 None
             },
-            preview: preview_summary(&snapshot, &kind),
+            preview: sync_entry_preview_summary(&snapshot, &kind),
         });
     }
     Ok(entries)
@@ -128,55 +129,4 @@ pub(super) fn normalize_mounts(mounts: &[PathBuf]) -> Vec<PathBuf> {
     normalized.sort();
     normalized.dedup();
     normalized
-}
-
-fn infer_snapshot_kind(snapshot: &BootstrapSnapshot) -> SyncEntryKind {
-    if snapshot
-        .manifest
-        .entries
-        .iter()
-        .any(|entry| !entry.deleted && entry.relative_path.as_os_str().is_empty())
-    {
-        SyncEntryKind::File
-    } else {
-        SyncEntryKind::Directory
-    }
-}
-
-fn preview_summary(snapshot: &BootstrapSnapshot, kind: &SyncEntryKind) -> Option<String> {
-    match kind {
-        SyncEntryKind::File => snapshot.bodies.first().map(|body| {
-            body.text
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .chars()
-                .take(120)
-                .collect::<String>()
-        }),
-        SyncEntryKind::Directory => {
-            let live_count = snapshot
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.deleted)
-                .count();
-            if live_count == 0 {
-                None
-            } else if let Some(first_entry) = snapshot
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.deleted)
-                .min_by(|left, right| left.relative_path.cmp(&right.relative_path))
-            {
-                Some(format!(
-                    "{live_count} files; first={}",
-                    first_entry.relative_path.display()
-                ))
-            } else {
-                Some(format!("{live_count} files"))
-            }
-        }
-    }
 }

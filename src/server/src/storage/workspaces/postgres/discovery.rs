@@ -3,12 +3,13 @@
 Owns Postgres-backed remote sync-entry listing, kind inference, and preview rendering for `projector get`.
 */
 // @fileimplements PROJECTOR.SERVER.POSTGRES_SYNC_ENTRY_DISCOVERY
-use projector_domain::{BootstrapSnapshot, SyncEntryKind, SyncEntrySummary};
+use projector_domain::SyncEntrySummary;
 
 use crate::storage::StoreError;
 use crate::storage::history::postgres_reconstruct_workspace_at_cursor;
 
 use super::super::parse_sync_entry_kind;
+use super::super::{infer_sync_entry_kind, sync_entry_preview_summary};
 
 pub(crate) async fn postgres_list_sync_entries(
     client: &tokio_postgres::Client,
@@ -42,7 +43,7 @@ pub(crate) async fn postgres_list_sync_entries(
             .as_deref()
             .map(parse_sync_entry_kind)
             .transpose()?
-            .unwrap_or_else(|| infer_snapshot_kind(&snapshot));
+            .unwrap_or_else(|| infer_sync_entry_kind(&snapshot));
         let last_updated_ms = row
             .get::<_, Option<i64>>("last_updated_ms")
             .map(|value| value as u128);
@@ -53,55 +54,9 @@ pub(crate) async fn postgres_list_sync_entries(
             kind: kind.clone(),
             source_repo_name,
             last_updated_ms,
-            preview: preview_summary(&snapshot, &kind),
+            preview: sync_entry_preview_summary(&snapshot, &kind),
         });
     }
 
     Ok(entries)
-}
-
-fn infer_snapshot_kind(snapshot: &BootstrapSnapshot) -> SyncEntryKind {
-    if snapshot
-        .manifest
-        .entries
-        .iter()
-        .any(|entry| !entry.deleted && entry.relative_path.as_os_str().is_empty())
-    {
-        SyncEntryKind::File
-    } else {
-        SyncEntryKind::Directory
-    }
-}
-
-fn preview_summary(snapshot: &BootstrapSnapshot, kind: &SyncEntryKind) -> Option<String> {
-    match kind {
-        SyncEntryKind::File => snapshot.bodies.first().map(|body| {
-            let single_line = body.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            single_line.chars().take(120).collect::<String>()
-        }),
-        SyncEntryKind::Directory => {
-            let live_count = snapshot
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.deleted)
-                .count();
-            if live_count == 0 {
-                None
-            } else if let Some(first_entry) = snapshot
-                .manifest
-                .entries
-                .iter()
-                .filter(|entry| !entry.deleted)
-                .min_by(|left, right| left.relative_path.cmp(&right.relative_path))
-            {
-                Some(format!(
-                    "{live_count} files; first={}",
-                    first_entry.relative_path.display()
-                ))
-            } else {
-                Some(format!("{live_count} files"))
-            }
-        }
-    }
 }
