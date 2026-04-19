@@ -210,7 +210,12 @@ pub(super) fn purge_document_body_history(
             request.document_id, request.workspace_id
         )));
     }
-    super::super::history::ensure_expected_purge_match_set(request, &matched_seqs)?;
+    super::super::history::ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "purge",
+    )?;
 
     let matched = connection.execute(
         "update body_revisions \
@@ -279,7 +284,12 @@ pub(super) fn redact_document_body_history(
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
-    super::super::history::ensure_expected_redaction_match_set(request, &matched_seqs)?;
+    super::super::history::ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "redaction",
+    )?;
 
     let live_path = connection
         .query_row(

@@ -246,35 +246,21 @@ pub(crate) fn retained_purge_matches(
     matches
 }
 
-pub(crate) fn ensure_expected_redaction_match_set(
-    request: &RedactDocumentBodyHistoryRequest,
+pub(crate) fn ensure_expected_history_match_set(
+    document_id: &str,
+    expected_match_seqs: Option<&Vec<u64>>,
     matched_seqs: &[u64],
+    operation_name: &str,
 ) -> Result<(), StoreError> {
-    let Some(expected_match_seqs) = request.expected_match_seqs.as_ref() else {
+    let Some(expected_match_seqs) = expected_match_seqs else {
         return Ok(());
     };
     if expected_match_seqs == matched_seqs {
         return Ok(());
     }
     Err(StoreError::new(format!(
-        "document {} retained redaction preview is stale: expected seqs {:?}, found {:?}",
-        request.document_id, expected_match_seqs, matched_seqs
-    )))
-}
-
-pub(crate) fn ensure_expected_purge_match_set(
-    request: &PurgeDocumentBodyHistoryRequest,
-    matched_seqs: &[u64],
-) -> Result<(), StoreError> {
-    let Some(expected_match_seqs) = request.expected_match_seqs.as_ref() else {
-        return Ok(());
-    };
-    if expected_match_seqs == matched_seqs {
-        return Ok(());
-    }
-    Err(StoreError::new(format!(
-        "document {} retained purge preview is stale: expected seqs {:?}, found {:?}",
-        request.document_id, expected_match_seqs, matched_seqs
+        "document {} retained {} preview is stale: expected seqs {:?}, found {:?}",
+        document_id, operation_name, expected_match_seqs, matched_seqs
     )))
 }
 
@@ -449,7 +435,12 @@ pub(crate) fn file_purge_document_body_history(
             request.document_id, request.workspace_id
         )));
     }
-    ensure_expected_purge_match_set(request, &matched_seqs)?;
+    ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "purge",
+    )?;
     let encoded =
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
     fs::write(
@@ -509,7 +500,12 @@ pub(crate) fn file_redact_document_body_history(
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
-    ensure_expected_redaction_match_set(request, &matched_seqs)?;
+    ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "redaction",
+    )?;
     let encoded =
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
     fs::write(
@@ -987,7 +983,12 @@ pub(crate) async fn postgres_purge_document_body_history(
             request.document_id, request.workspace_id
         )));
     }
-    ensure_expected_purge_match_set(request, &matched_seqs)?;
+    ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "purge",
+    )?;
     let matched = transaction
         .execute(
             "update document_body_revisions \
@@ -1104,7 +1105,12 @@ pub(crate) async fn postgres_redact_document_body_history(
             request.document_id, request.exact_text, request.workspace_id
         )));
     }
-    ensure_expected_redaction_match_set(request, &matched_seqs)?;
+    ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "redaction",
+    )?;
     let live_path = transaction
         .query_opt(
             "select mount_path, relative_path from document_paths \

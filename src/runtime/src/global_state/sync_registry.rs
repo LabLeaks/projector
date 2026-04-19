@@ -102,21 +102,11 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use projector_domain::{ActorId, RepoSyncConfig, RepoSyncEntry, SyncEntryKind, WorkspaceId};
 
     use super::{FileMachineSyncRegistryStore, ProjectorHome};
-
-    fn temp_home(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("projector-home-{name}-{unique}"));
-        std::fs::create_dir_all(&path).expect("create temp projector home");
-        path
-    }
+    use crate::test_support::temp_projector_home;
 
     fn sample_config() -> RepoSyncConfig {
         RepoSyncConfig {
@@ -145,7 +135,8 @@ mod tests {
 
     #[test]
     fn sync_repo_registers_and_unregisters_repo() {
-        let store = FileMachineSyncRegistryStore::new(ProjectorHome::new(temp_home("registry")));
+        let store =
+            FileMachineSyncRegistryStore::new(ProjectorHome::new(temp_projector_home("registry")));
         let repo_root = Path::new("/tmp/projector-repo");
 
         let registry = store

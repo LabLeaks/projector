@@ -114,24 +114,13 @@ impl FileServerProfileStore {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::{FileServerProfileStore, ProjectorHome};
-
-    fn temp_home(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("projector-home-{name}-{unique}"));
-        std::fs::create_dir_all(&path).expect("create temp projector home");
-        path
-    }
+    use crate::test_support::temp_projector_home;
 
     #[test]
     fn server_profile_store_round_trips_and_removes_profiles() {
-        let store = FileServerProfileStore::new(ProjectorHome::new(temp_home("profiles")));
+        let store =
+            FileServerProfileStore::new(ProjectorHome::new(temp_projector_home("profiles")));
         store
             .upsert_profile("homebox", "127.0.0.1:7000", Some("spotless@host"))
             .expect("add profile");

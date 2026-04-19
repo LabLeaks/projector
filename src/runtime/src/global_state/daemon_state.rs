@@ -156,24 +156,14 @@ fn now_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use super::{FileMachineDaemonStateStore, MachineDaemonState, ProjectorHome};
-
-    fn temp_home(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("projector-home-{name}-{unique}"));
-        std::fs::create_dir_all(&path).expect("create temp projector home");
-        path
-    }
+    use crate::test_support::temp_projector_home;
 
     #[test]
     fn daemon_state_round_trips_and_clears() {
-        let store = FileMachineDaemonStateStore::new(ProjectorHome::new(temp_home("daemon-state")));
+        let store = FileMachineDaemonStateStore::new(ProjectorHome::new(temp_projector_home(
+            "daemon-state",
+        )));
 
         let running = store.write_running(4242).expect("write running state");
         let loaded = store.load().expect("load state").expect("state exists");
@@ -192,7 +182,9 @@ mod tests {
 
     #[test]
     fn load_active_clears_stale_state() {
-        let store = FileMachineDaemonStateStore::new(ProjectorHome::new(temp_home("daemon-stale")));
+        let store = FileMachineDaemonStateStore::new(ProjectorHome::new(temp_projector_home(
+            "daemon-stale",
+        )));
         store
             .save(&MachineDaemonState {
                 pid: u32::MAX,

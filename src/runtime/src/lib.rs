@@ -9,6 +9,8 @@ pub mod status;
 pub mod sync_config_store;
 pub mod sync_issue;
 pub mod sync_targets;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod transport;
 pub mod watcher;
 

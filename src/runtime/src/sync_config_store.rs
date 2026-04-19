@@ -88,22 +88,13 @@ impl FileRepoSyncConfigStore {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::path::Path;
+    use std::path::PathBuf;
 
     use projector_domain::{ActorId, RepoSyncConfig, RepoSyncEntry, SyncEntryKind, WorkspaceId};
 
     use super::FileRepoSyncConfigStore;
-
-    fn temp_repo(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("projector-{name}-{unique}"));
-        std::fs::create_dir_all(&path).expect("create temp repo");
-        path
-    }
+    use crate::test_support::temp_repo_root;
 
     fn sample_entry(local_relative_path: &str, kind: SyncEntryKind) -> RepoSyncEntry {
         RepoSyncEntry {
@@ -119,7 +110,7 @@ mod tests {
 
     #[test]
     fn load_defaults_to_empty_config_when_missing() {
-        let repo = temp_repo("sync-config-empty");
+        let repo = temp_repo_root("sync-config-empty");
         let store = FileRepoSyncConfigStore::new(&repo);
 
         assert_eq!(
@@ -130,7 +121,7 @@ mod tests {
 
     #[test]
     fn save_and_load_round_trip_sync_entries() {
-        let repo = temp_repo("sync-config-roundtrip");
+        let repo = temp_repo_root("sync-config-roundtrip");
         let store = FileRepoSyncConfigStore::new(&repo);
         let config = RepoSyncConfig {
             entries: vec![
@@ -146,7 +137,7 @@ mod tests {
 
     #[test]
     fn upsert_entry_replaces_existing_local_path() {
-        let repo = temp_repo("sync-config-upsert");
+        let repo = temp_repo_root("sync-config-upsert");
         let store = FileRepoSyncConfigStore::new(&repo);
 
         store
@@ -167,7 +158,7 @@ mod tests {
 
     #[test]
     fn remove_entry_deletes_only_matching_path() {
-        let repo = temp_repo("sync-config-remove");
+        let repo = temp_repo_root("sync-config-remove");
         let store = FileRepoSyncConfigStore::new(&repo);
         store
             .save(&RepoSyncConfig {
