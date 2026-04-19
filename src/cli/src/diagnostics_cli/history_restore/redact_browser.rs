@@ -14,7 +14,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use projector_domain::DocumentBodyRevision;
+use projector_domain::DocumentBodyRedactionMatch;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
@@ -31,27 +31,17 @@ pub(crate) enum RedactBrowserExit {
 pub(crate) fn browse_redaction_matches(
     requested_path: &Path,
     exact_text: &str,
-    revisions: &[DocumentBodyRevision],
+    matches: &[DocumentBodyRedactionMatch],
 ) -> Result<RedactBrowserExit, Box<dyn Error>> {
-    let mut browser = RedactBrowser::new(requested_path, exact_text, revisions)?;
+    let mut browser = RedactBrowser::new(requested_path, exact_text, matches)?;
     browser.run()
 }
 
 #[derive(Clone, Debug)]
-struct BrowserMatch {
-    seq: u64,
-    actor_id: String,
-    timestamp_ms: u128,
-    history_kind: String,
-    checkpoint_anchor_seq: Option<u64>,
-    occurrences: usize,
-    previews: Vec<String>,
-}
-
 struct RedactBrowser<'a> {
     requested_path: &'a Path,
     exact_text: &'a str,
-    matches: Vec<BrowserMatch>,
+    matches: Vec<DocumentBodyRedactionMatch>,
     selected_idx: usize,
     detail_scroll: u16,
     mode: BrowserMode,
@@ -67,29 +57,16 @@ impl<'a> RedactBrowser<'a> {
     fn new(
         requested_path: &'a Path,
         exact_text: &'a str,
-        revisions: &[DocumentBodyRevision],
+        matches: &[DocumentBodyRedactionMatch],
     ) -> Result<Self, Box<dyn Error>> {
-        if revisions.is_empty() {
+        if matches.is_empty() {
             return Err("redact browser requires at least one retained match".into());
         }
-
-        let matches = revisions
-            .iter()
-            .map(|revision| BrowserMatch {
-                seq: revision.seq,
-                actor_id: revision.actor_id.clone(),
-                timestamp_ms: revision.timestamp_ms,
-                history_kind: revision.history_kind.clone(),
-                checkpoint_anchor_seq: revision.checkpoint_anchor_seq,
-                occurrences: count_occurrences(revision, exact_text),
-                previews: build_match_previews(revision, exact_text),
-            })
-            .collect::<Vec<_>>();
 
         Ok(Self {
             requested_path,
             exact_text,
-            matches,
+            matches: matches.to_vec(),
             selected_idx: 0,
             detail_scroll: 0,
             mode: BrowserMode::Browsing,
@@ -217,7 +194,7 @@ impl<'a> RedactBrowser<'a> {
 
         let preview_lines = self
             .selected_match()
-            .previews
+            .preview_lines
             .iter()
             .map(|line| Line::raw(line.as_str()))
             .collect::<Vec<_>>();
@@ -288,13 +265,13 @@ impl<'a> RedactBrowser<'a> {
 
     fn max_detail_scroll(&self) -> u16 {
         self.selected_match()
-            .previews
+            .preview_lines
             .len()
             .saturating_sub(10)
             .min(u16::MAX as usize) as u16
     }
 
-    fn selected_match(&self) -> &BrowserMatch {
+    fn selected_match(&self) -> &DocumentBodyRedactionMatch {
         &self.matches[self.selected_idx]
     }
 }
@@ -306,33 +283,6 @@ impl Drop for RedactTerminalGuard {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
     }
-}
-
-fn build_match_previews(revision: &DocumentBodyRevision, exact_text: &str) -> Vec<String> {
-    let mut previews = collect_matching_lines(&revision.body_text, exact_text)
-        .into_iter()
-        .chain(collect_matching_lines(&revision.base_text, exact_text))
-        .take(6)
-        .collect::<Vec<_>>();
-    if previews.is_empty() {
-        previews.push("- (no preview available)".to_owned());
-    }
-    previews
-}
-
-fn collect_matching_lines(text: &str, exact_text: &str) -> Vec<String> {
-    text.lines()
-        .filter(|line| line.contains(exact_text))
-        .flat_map(|line| {
-            let trimmed = line.trim();
-            let redacted = trimmed.replace(exact_text, "[REDACTED]");
-            [format!("- {trimmed}"), format!("+ {redacted}")]
-        })
-        .collect()
-}
-
-fn count_occurrences(revision: &DocumentBodyRevision, exact_text: &str) -> usize {
-    revision.base_text.matches(exact_text).count() + revision.body_text.matches(exact_text).count()
 }
 
 fn abbreviate_actor(actor_id: &str) -> String {

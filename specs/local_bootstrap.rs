@@ -10,14 +10,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use projector_domain::{
-    ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyRevision, DocumentId,
-    DocumentKind, DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse,
-    ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
-    ManifestEntry, ManifestState, ProjectionRoots, ProvenanceEvent, ProvenanceEventKind,
-    PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
-    RedactDocumentBodyHistoryRequest, RepoSyncConfig, RepoSyncEntry, ResolveHistoricalPathRequest,
-    ResolveHistoricalPathResponse, RestoreWorkspaceRequest, SyncContext, SyncEntryKind,
-    WorkspaceId,
+    ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyRedactionMatch,
+    DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathRevision, ListBodyRevisionsRequest,
+    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
+    ListPathRevisionsResponse, ManifestEntry, ManifestState,
+    PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
+    ProjectionRoots, ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
+    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
+    RepoSyncConfig, RepoSyncEntry, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
+    RestoreWorkspaceRequest, SyncContext, SyncEntryKind, WorkspaceId,
 };
 use projector_runtime::{
     BindingStore, FileBindingStore, FileMachineSyncRegistryStore, FileProvenanceLog,
@@ -635,6 +636,30 @@ fn list_body_revisions(
         .revisions
 }
 
+fn preview_redact_body_history(
+    addr: &str,
+    workspace_id: &str,
+    document_id: &str,
+    exact_text: &str,
+    limit: usize,
+) -> Vec<DocumentBodyRedactionMatch> {
+    reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/history/body/redact/preview"))
+        .json(&PreviewRedactDocumentBodyHistoryRequest {
+            workspace_id: workspace_id.to_owned(),
+            document_id: document_id.to_owned(),
+            exact_text: exact_text.to_owned(),
+            limit,
+        })
+        .send()
+        .expect("send body history redact preview request")
+        .error_for_status()
+        .expect("body history redact preview response status")
+        .json::<PreviewRedactDocumentBodyHistoryResponse>()
+        .expect("decode body history redact preview response")
+        .matches
+}
+
 fn purge_body_history(addr: &str, workspace_id: &str, actor_id: &str, document_id: &str) {
     reqwest::blocking::Client::new()
         .post(format!("http://{addr}/history/body/purge"))
@@ -925,6 +950,16 @@ impl Transport for RejectCreateTransport {
         Ok(Vec::new())
     }
 
+    fn preview_redact_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _exact_text: &str,
+        _limit: usize,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, Self::Error> {
+        Ok(Vec::new())
+    }
+
     fn list_path_revisions(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1099,6 +1134,16 @@ impl Transport for RetryAfterRebootstrapTransport {
         Ok(Vec::new())
     }
 
+    fn preview_redact_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _exact_text: &str,
+        _limit: usize,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, Self::Error> {
+        Ok(Vec::new())
+    }
+
     fn list_path_revisions(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1268,6 +1313,16 @@ impl Transport for RetryImmediatelyTransport {
         _document_id: &DocumentId,
         _limit: usize,
     ) -> Result<Vec<DocumentBodyRevision>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    fn preview_redact_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _exact_text: &str,
+        _limit: usize,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, Self::Error> {
         Ok(Vec::new())
     }
 
@@ -3724,6 +3779,68 @@ fn server_can_redact_exact_text_in_retained_document_body_history() {
     }));
 }
 
+// @verifies PROJECTOR.SERVER.HISTORY.PREVIEWS_REDACTION_MATCHES
+#[test]
+fn server_lists_retained_redaction_matches_with_preview_lines() {
+    let repo = temp_repo("body-history-redact-preview");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    let workspace_id = first_sync
+        .lines()
+        .find_map(|line| line.strip_prefix("workspace_id: "))
+        .expect("workspace id")
+        .to_owned();
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    let secret = "SECRET-123";
+    fs::write(
+        repo.join("private/briefs/history-redact-preview.html"),
+        format!("<p>created {secret} revision</p>\n"),
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/history-redact-preview.html"),
+        format!("<p>updated {secret} revision</p>\n"),
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap");
+    let document_id = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| {
+            !entry.deleted
+                && entry.mount_relative_path == Path::new("private")
+                && entry.relative_path == Path::new("briefs/history-redact-preview.html")
+        })
+        .expect("created entry")
+        .document_id
+        .as_str()
+        .to_owned();
+
+    let matches = preview_redact_body_history(&addr, &workspace_id, &document_id, secret, 10);
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(matches[1].history_kind, "yrs_text_update_v1");
+    assert!(matches.iter().all(|entry| entry.occurrences >= 1));
+    assert!(matches.iter().all(|entry| {
+        entry.preview_lines.iter().any(|line| line.contains(secret))
+            && entry
+                .preview_lines
+                .iter()
+                .any(|line| line.contains("[REDACTED]"))
+    }));
+}
+
 // @verifies PROJECTOR.SERVER.HISTORY.PURGES_DOCUMENT_RETAINED_BODY_HISTORY
 #[test]
 fn server_can_purge_retained_document_body_history_for_one_document() {
@@ -4248,7 +4365,8 @@ fn assert_projector_redact_rewrites_history() {
     assert!(preview.contains("replacement: [REDACTED]"));
     assert!(preview.contains("match: seq=1"));
     assert!(preview.contains("match: seq=2"));
-    assert!(preview.contains(&format!("excerpt: <p>created {secret} revision</p>")));
+    assert!(preview.contains(&format!("excerpt: - <p>created {secret} revision</p>")));
+    assert!(preview.contains("excerpt: + <p>created [REDACTED] revision</p>"));
     assert!(preview.contains("next: rerun with --confirm to apply this redaction"));
 
     let before = run_projector(&repo, &["history", "private/briefs/cli-redact.html"]);

@@ -304,10 +304,16 @@ fn synthetic_event_summary(kind: &ProvenanceEventKind, entry: &ManifestEntry) ->
             format!("deleted text document at {}", display_manifest_path(entry))
         }
         ProvenanceEventKind::DocumentHistoryRedacted => {
-            format!("redacted retained body history for {}", display_manifest_path(entry))
+            format!(
+                "redacted retained body history for {}",
+                display_manifest_path(entry)
+            )
         }
         ProvenanceEventKind::DocumentHistoryPurged => {
-            format!("purged retained body history for {}", display_manifest_path(entry))
+            format!(
+                "purged retained body history for {}",
+                display_manifest_path(entry)
+            )
         }
         ProvenanceEventKind::SyncBootstrapped => "bootstrapped local projector state".to_owned(),
         ProvenanceEventKind::SyncReusedBinding => "reused existing checkout binding".to_owned(),

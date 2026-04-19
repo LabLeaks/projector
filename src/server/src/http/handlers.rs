@@ -15,9 +15,9 @@ use projector_domain::{
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
     ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
     ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
-    ListSyncEntriesResponse, MoveDocumentRequest, ReconstructWorkspaceRequest,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
-    ReconstructWorkspaceResponse,
+    ListSyncEntriesResponse, MoveDocumentRequest, PreviewRedactDocumentBodyHistoryRequest,
+    PreviewRedactDocumentBodyHistoryResponse, PurgeDocumentBodyHistoryRequest,
+    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
     ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, UpdateDocumentRequest,
 };
@@ -41,6 +41,10 @@ pub(super) fn app(store: Arc<dyn WorkspaceStore>) -> Router {
         .route("/events/list", post(list_events))
         .route("/history/body/list", post(list_body_revisions))
         .route("/history/body/restore", post(restore_body_revision))
+        .route(
+            "/history/body/redact/preview",
+            post(preview_redact_body_history),
+        )
         .route("/history/body/redact", post(redact_body_history))
         .route("/history/body/purge", post(purge_body_history))
         .route("/history/path/list", post(list_path_revisions))
@@ -232,6 +236,19 @@ async fn restore_body_revision(
         .map_err(store_error_response)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn preview_redact_body_history(
+    State(state): State<AppState>,
+    Json(request): Json<PreviewRedactDocumentBodyHistoryRequest>,
+) -> Result<Json<PreviewRedactDocumentBodyHistoryResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let matches = state
+        .store
+        .preview_redact_document_body_history(&request)
+        .await
+        .map_err(store_error_response)?;
+
+    Ok(Json(PreviewRedactDocumentBodyHistoryResponse { matches }))
 }
 
 async fn purge_body_history(

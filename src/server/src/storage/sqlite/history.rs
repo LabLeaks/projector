@@ -4,8 +4,9 @@ Owns SQLite event and revision reads for list, discovery, and historical path re
 */
 // @fileimplements PROJECTOR.SERVER.SQLITE_HISTORY
 use projector_domain::{
-    DocumentBodyRevision, DocumentId, DocumentPathRevision, ProvenanceEvent,
-    ProvenanceEventKind, PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, ProvenanceEventKind,
+    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -100,6 +101,25 @@ pub(super) fn list_body_revisions(
         revisions = revisions.split_off(revisions.len() - limit);
     }
     Ok(revisions)
+}
+
+pub(super) fn preview_redact_document_body_history(
+    connection: &Connection,
+    request: &PreviewRedactDocumentBodyHistoryRequest,
+) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
+    let matches = super::super::history::retained_redaction_matches(
+        read_body_revisions(connection, &request.workspace_id)?,
+        &request.document_id,
+        &request.exact_text,
+        request.limit,
+    )?;
+    if matches.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history matching {:?} in workspace {}",
+            request.document_id, request.exact_text, request.workspace_id
+        )));
+    }
+    Ok(matches)
 }
 
 pub(super) fn list_path_revisions(

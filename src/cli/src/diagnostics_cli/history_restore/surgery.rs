@@ -20,32 +20,15 @@ use super::redact_browser::{RedactBrowserExit, browse_redaction_matches};
 pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let redact_args = parse_redact_args(&args)?;
     let mut prepared = prepare_document_history_surgery(&redact_args.repo_relative_path)?;
-    let revisions =
-        prepared
-            .transport
-            .list_body_revisions(&prepared.binding, &prepared.document_id, 20)?;
-    let matching_revisions = revisions
-        .iter()
-        .filter(|revision| {
-            revision.base_text.contains(&redact_args.exact_text)
-                || revision.body_text.contains(&redact_args.exact_text)
-        })
-        .collect::<Vec<_>>();
+    let matching_revisions = prepared.transport.preview_redact_document_body_history(
+        &prepared.binding,
+        &prepared.document_id,
+        &redact_args.exact_text,
+        20,
+    )?;
     let matching_revision_count = matching_revisions.len();
-    if matching_revisions.is_empty() {
-        return Err(format!(
-            "no retained revisions for {} contain the exact text {:?}",
-            prepared.requested_path.display(),
-            redact_args.exact_text
-        )
-        .into());
-    }
 
     if is_interactive_terminal() && !redact_args.confirm {
-        let matching_revisions = matching_revisions
-            .iter()
-            .map(|revision| (*revision).clone())
-            .collect::<Vec<_>>();
         match browse_redaction_matches(
             &prepared.requested_path,
             &redact_args.exact_text,
@@ -75,7 +58,7 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     println!("matching_revisions: {matching_revision_count}");
     println!("replacement: [REDACTED]");
     for revision in &matching_revisions {
-        print_redaction_match(revision, &redact_args.exact_text);
+        print_redaction_match(revision);
     }
 
     if !should_apply_history_surgery(
@@ -202,29 +185,12 @@ fn should_apply_history_surgery(confirm_flag: bool, prompt: &str) -> Result<bool
     Ok(matches!(response.trim(), "y" | "Y" | "yes" | "YES" | "Yes"))
 }
 
-fn print_redaction_match(revision: &projector_domain::DocumentBodyRevision, exact_text: &str) {
-    let occurrences = revision.base_text.matches(exact_text).count()
-        + revision.body_text.matches(exact_text).count();
+fn print_redaction_match(revision: &projector_domain::DocumentBodyRedactionMatch) {
     println!(
         "match: seq={} kind={} occurrences={}",
-        revision.seq, revision.history_kind, occurrences
+        revision.seq, revision.history_kind, revision.occurrences
     );
-    for excerpt in redaction_excerpts(revision, exact_text) {
+    for excerpt in revision.preview_lines.iter().take(6) {
         println!("  excerpt: {excerpt}");
     }
-}
-
-fn redaction_excerpts(
-    revision: &projector_domain::DocumentBodyRevision,
-    exact_text: &str,
-) -> Vec<String> {
-    let mut excerpts = revision
-        .body_text
-        .lines()
-        .chain(revision.base_text.lines())
-        .filter(|line| line.contains(exact_text))
-        .map(|line| line.trim().to_owned())
-        .collect::<Vec<_>>();
-    excerpts.truncate(3);
-    excerpts
 }

@@ -671,7 +671,9 @@ impl BodyStateModel for FullTextBodyModel {
         }
 
         let redacted_base = payload.base_text().replace(exact_text, replacement_text);
-        let redacted_body = payload.materialized_text().replace(exact_text, replacement_text);
+        let redacted_body = payload
+            .materialized_text()
+            .replace(exact_text, replacement_text);
         if redacted_base == payload.base_text() && redacted_body == payload.materialized_text() {
             return Ok(None);
         }

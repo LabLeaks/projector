@@ -6,8 +6,8 @@ Defines the runtime transport contract for bootstrap, delta reads, document life
 use std::path::Path;
 
 use projector_domain::{
-    BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentPathRevision, ProvenanceEvent,
-    SyncContext,
+    BootstrapSnapshot, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
+    DocumentPathRevision, ProvenanceEvent, SyncContext,
 };
 
 mod http;
@@ -66,6 +66,13 @@ pub trait Transport {
         document_id: &DocumentId,
         limit: usize,
     ) -> Result<Vec<DocumentBodyRevision>, Self::Error>;
+    fn preview_redact_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+        exact_text: &str,
+        limit: usize,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, Self::Error>;
     fn list_path_revisions(
         &mut self,
         binding: &dyn SyncContext,

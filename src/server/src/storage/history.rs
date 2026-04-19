@@ -26,9 +26,10 @@ use super::provenance::{
 };
 use super::workspaces::workspace_dir;
 use projector_domain::{
-    BootstrapSnapshot, DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathRevision,
-    ManifestEntry, ManifestState, ProvenanceEvent, ProvenanceEventKind,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
+    BootstrapSnapshot, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
+    DocumentPathRevision, ManifestEntry, ManifestState, PreviewRedactDocumentBodyHistoryRequest,
+    ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
+    RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
 };
 
 const HISTORY_REDACTION_MARKER: &str = "[REDACTED]";
@@ -121,7 +122,11 @@ impl FileBodyRevision {
 
     pub(crate) fn redacted(&self, exact_text: &str) -> Result<Option<Self>, StoreError> {
         let redacted = FULL_TEXT_BODY_MODEL
-            .redact_history_payload(&self.retained_history(), exact_text, HISTORY_REDACTION_MARKER)
+            .redact_history_payload(
+                &self.retained_history(),
+                exact_text,
+                HISTORY_REDACTION_MARKER,
+            )
             .map_err(StoreError::new)?;
         Ok(redacted.map(|payload| {
             let mut redacted = self.clone();
@@ -132,6 +137,87 @@ impl FileBodyRevision {
             redacted
         }))
     }
+
+    pub(crate) fn redaction_match(
+        &self,
+        exact_text: &str,
+    ) -> Result<Option<DocumentBodyRedactionMatch>, StoreError> {
+        let Some(redacted) = self.redacted(exact_text)? else {
+            return Ok(None);
+        };
+        let preview_lines = build_redaction_preview_lines(
+            &self.retained_history(),
+            &redacted.retained_history(),
+            exact_text,
+        );
+        Ok(Some(DocumentBodyRedactionMatch {
+            seq: self.seq,
+            actor_id: self.actor_id.clone(),
+            document_id: self.document_id.clone(),
+            checkpoint_anchor_seq: self.checkpoint_anchor_seq,
+            history_kind: self.history_kind.as_str().to_owned(),
+            occurrences: self.base_text.matches(exact_text).count()
+                + self
+                    .retained_history()
+                    .materialized_text()
+                    .matches(exact_text)
+                    .count(),
+            preview_lines,
+            timestamp_ms: self.timestamp_ms,
+        }))
+    }
+}
+
+fn build_redaction_preview_lines(
+    original: &RetainedBodyHistoryPayload,
+    redacted: &RetainedBodyHistoryPayload,
+    exact_text: &str,
+) -> Vec<String> {
+    let mut lines = collect_redaction_preview_lines(original.materialized_text(), exact_text);
+    if !original.base_text().is_empty() {
+        lines.extend(collect_redaction_preview_lines(
+            original.base_text(),
+            exact_text,
+        ));
+    }
+    if lines.is_empty() {
+        let redacted_lines =
+            collect_redaction_preview_lines(redacted.materialized_text(), "[REDACTED]");
+        lines.extend(redacted_lines);
+    }
+    lines.truncate(8);
+    lines
+}
+
+fn collect_redaction_preview_lines(text: &str, needle: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| line.contains(needle))
+        .flat_map(|line| {
+            let trimmed = line.trim();
+            let redacted = trimmed.replace(needle, HISTORY_REDACTION_MARKER);
+            [format!("- {trimmed}"), format!("+ {redacted}")]
+        })
+        .collect()
+}
+
+pub(crate) fn retained_redaction_matches(
+    revisions: impl IntoIterator<Item = FileBodyRevision>,
+    document_id: &str,
+    exact_text: &str,
+    limit: usize,
+) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
+    let mut matches = revisions
+        .into_iter()
+        .filter(|revision| revision.document_id == document_id)
+        .map(|revision| revision.redaction_match(exact_text))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if matches.len() > limit {
+        matches = matches.split_off(matches.len() - limit);
+    }
+    Ok(matches)
 }
 
 pub(crate) fn replay_body_revision_run(
@@ -247,6 +333,25 @@ pub(crate) fn file_list_body_revisions(
     Ok(revisions)
 }
 
+pub(crate) fn file_preview_redact_document_body_history(
+    state_dir: &Path,
+    request: &PreviewRedactDocumentBodyHistoryRequest,
+) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
+    let matches = retained_redaction_matches(
+        file_read_body_revisions(state_dir, &request.workspace_id)?,
+        &request.document_id,
+        &request.exact_text,
+        request.limit,
+    )?;
+    if matches.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history matching {:?} in workspace {}",
+            request.document_id, request.exact_text, request.workspace_id
+        )));
+    }
+    Ok(matches)
+}
+
 pub(crate) fn file_purge_document_body_history(
     state_dir: &Path,
     request: &PurgeDocumentBodyHistoryRequest,
@@ -268,7 +373,10 @@ pub(crate) fn file_purge_document_body_history(
     }
     let encoded =
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
-    fs::write(file_body_revisions_path(state_dir, &request.workspace_id), encoded)?;
+    fs::write(
+        file_body_revisions_path(state_dir, &request.workspace_id),
+        encoded,
+    )?;
 
     let current_snapshot = file_read_workspace_snapshot(state_dir, &request.workspace_id)?;
     let live_entry = current_snapshot
@@ -276,7 +384,8 @@ pub(crate) fn file_purge_document_body_history(
         .entries
         .iter()
         .find(|entry| !entry.deleted && entry.document_id.as_str() == request.document_id);
-    let mount_relative_path = live_entry.map(|entry| entry.mount_relative_path.display().to_string());
+    let mount_relative_path =
+        live_entry.map(|entry| entry.mount_relative_path.display().to_string());
     let relative_path = live_entry.map(|entry| entry.relative_path.display().to_string());
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
     file_append_workspace_event(
@@ -323,7 +432,10 @@ pub(crate) fn file_redact_document_body_history(
     }
     let encoded =
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
-    fs::write(file_body_revisions_path(state_dir, &request.workspace_id), encoded)?;
+    fs::write(
+        file_body_revisions_path(state_dir, &request.workspace_id),
+        encoded,
+    )?;
 
     let current_snapshot = file_read_workspace_snapshot(state_dir, &request.workspace_id)?;
     let live_entry = current_snapshot
@@ -331,7 +443,8 @@ pub(crate) fn file_redact_document_body_history(
         .entries
         .iter()
         .find(|entry| !entry.deleted && entry.document_id.as_str() == request.document_id);
-    let mount_relative_path = live_entry.map(|entry| entry.mount_relative_path.display().to_string());
+    let mount_relative_path =
+        live_entry.map(|entry| entry.mount_relative_path.display().to_string());
     let relative_path = live_entry.map(|entry| entry.relative_path.display().to_string());
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
     file_append_workspace_event(
@@ -673,6 +786,57 @@ pub(crate) async fn postgres_list_body_revisions(
         .collect::<Result<Vec<_>, StoreError>>()?;
     revisions.reverse();
     Ok(revisions)
+}
+
+pub(crate) async fn postgres_preview_redact_document_body_history(
+    client: &Client,
+    request: &PreviewRedactDocumentBodyHistoryRequest,
+) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
+    let rows = client
+        .query(
+            "select seq, actor_id, document_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted, \
+                (extract(epoch from created_at) * 1000)::bigint as timestamp_ms \
+             from document_body_revisions \
+             where workspace_id = $1 and document_id = $2 \
+             order by seq asc",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let revisions = rows
+        .into_iter()
+        .map(|row| {
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok(FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: 0,
+                actor_id: row.get::<_, String>("actor_id"),
+                document_id: row.get::<_, String>("document_id"),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind: kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    let matches = retained_redaction_matches(
+        revisions,
+        &request.document_id,
+        &request.exact_text,
+        request.limit,
+    )?;
+    if matches.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history matching {:?} in workspace {}",
+            request.document_id, request.exact_text, request.workspace_id
+        )));
+    }
+    Ok(matches)
 }
 
 pub(crate) async fn postgres_purge_document_body_history(

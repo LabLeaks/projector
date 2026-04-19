@@ -8,12 +8,12 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRevision,
-    DocumentId, DocumentPathRevision, MoveDocumentRequest, ProvenanceEvent,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
-    ResolveHistoricalPathRequest,
-    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
-    SyncEntryKind, SyncEntrySummary, UpdateDocumentRequest,
+    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRedactionMatch,
+    DocumentBodyRevision, DocumentId, DocumentPathRevision, MoveDocumentRequest,
+    PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
+    RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
+    UpdateDocumentRequest,
 };
 use rusqlite::Connection;
 
@@ -129,6 +129,14 @@ impl WorkspaceStore for SqliteWorkspaceStore {
     ) -> Result<Vec<DocumentBodyRevision>, StoreError> {
         let connection = self.connection.lock().expect("sqlite mutex poisoned");
         history::list_body_revisions(&connection, workspace_id, document_id, limit)
+    }
+
+    async fn preview_redact_document_body_history(
+        &self,
+        request: &PreviewRedactDocumentBodyHistoryRequest,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
+        let connection = self.connection.lock().expect("sqlite mutex poisoned");
+        history::preview_redact_document_body_history(&connection, request)
     }
 
     async fn list_path_revisions(

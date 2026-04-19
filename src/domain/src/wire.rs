@@ -158,6 +158,31 @@ pub struct ListBodyRevisionsResponse {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DocumentBodyRedactionMatch {
+    pub seq: u64,
+    pub actor_id: String,
+    pub document_id: String,
+    pub checkpoint_anchor_seq: Option<u64>,
+    pub history_kind: String,
+    pub occurrences: usize,
+    pub preview_lines: Vec<String>,
+    pub timestamp_ms: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PreviewRedactDocumentBodyHistoryRequest {
+    pub workspace_id: String,
+    pub document_id: String,
+    pub exact_text: String,
+    pub limit: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PreviewRedactDocumentBodyHistoryResponse {
+    pub matches: Vec<DocumentBodyRedactionMatch>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PurgeDocumentBodyHistoryRequest {
     pub workspace_id: String,
     pub actor_id: String,

@@ -9,12 +9,13 @@ use std::path::Path;
 use projector_domain::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
-    DocumentBodyRevision, DocumentId, DocumentPathRevision, ListBodyRevisionsRequest,
-    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
-    ListPathRevisionsResponse, ListSyncEntriesRequest, ListSyncEntriesResponse,
-    MoveDocumentRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
-    RedactDocumentBodyHistoryRequest, ReconstructWorkspaceRequest,
-    ReconstructWorkspaceResponse, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
+    ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
+    ListSyncEntriesResponse, MoveDocumentRequest, PreviewRedactDocumentBodyHistoryRequest,
+    PreviewRedactDocumentBodyHistoryResponse, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
+    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
+    ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncContext, SyncEntrySummary,
     UpdateDocumentRequest,
 };
@@ -275,6 +276,37 @@ impl Transport for HttpTransport {
 
         let payload: ListBodyRevisionsResponse = response.json().map_err(io::Error::other)?;
         Ok(payload.revisions)
+    }
+
+    fn preview_redact_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+        exact_text: &str,
+        limit: usize,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/body/redact/preview", self.base_url))
+            .json(&PreviewRedactDocumentBodyHistoryRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                document_id: document_id.as_str().to_owned(),
+                exact_text: exact_text.to_owned(),
+                limit,
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error(
+                "preview redact body history request",
+                response,
+            ));
+        }
+
+        let payload: PreviewRedactDocumentBodyHistoryResponse =
+            response.json().map_err(io::Error::other)?;
+        Ok(payload.matches)
     }
 
     fn list_path_revisions(

@@ -78,6 +78,9 @@ Server history storage can retain checkpointed document body snapshots together 
 @spec PROJECTOR.SERVER.HISTORY.RENDERS_SNAPSHOT_DIFF_HISTORY
 `POST /history/body/list` returns readable base-to-snapshot diff lines for retained body revisions so clients do not need to interpret raw retained CRDT payloads directly.
 
+@spec PROJECTOR.SERVER.HISTORY.PREVIEWS_REDACTION_MATCHES
+`POST /history/body/redact/preview` returns the retained revisions that exactly match one requested text together with server-rendered redaction previews so clients can browse redaction impact without deriving matches from raw history rows themselves.
+
 @spec PROJECTOR.SERVER.HISTORY.REDACTS_RETAINED_BODY_HISTORY
 `POST /history/body/redact` can rewrite one document's retained checkpoints and update history for a document id by replacing exact matched text with `[REDACTED]` while preserving readable retained history.
 

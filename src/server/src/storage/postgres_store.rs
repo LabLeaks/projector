@@ -5,12 +5,12 @@ Owns the Postgres-backed workspace store adapter, connection/migration bootstrap
 // @fileimplements PROJECTOR.SERVER.POSTGRES_STORE
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRevision,
-    DocumentId, DocumentPathRevision, MoveDocumentRequest, ProvenanceEvent,
-    PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
-    ResolveHistoricalPathRequest,
-    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
-    SyncEntryKind, SyncEntrySummary, UpdateDocumentRequest,
+    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRedactionMatch,
+    DocumentBodyRevision, DocumentId, DocumentPathRevision, MoveDocumentRequest,
+    PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
+    RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
+    UpdateDocumentRequest,
 };
 use std::path::PathBuf;
 use tokio::sync::Mutex;
@@ -142,6 +142,14 @@ impl WorkspaceStore for PostgresWorkspaceStore {
     ) -> Result<Vec<DocumentBodyRevision>, StoreError> {
         let client = self.client.lock().await;
         history::postgres_list_body_revisions(&client, workspace_id, document_id, limit).await
+    }
+
+    async fn preview_redact_document_body_history(
+        &self,
+        request: &PreviewRedactDocumentBodyHistoryRequest,
+    ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
+        let client = self.client.lock().await;
+        history::postgres_preview_redact_document_body_history(&client, request).await
     }
 
     async fn list_path_revisions(
