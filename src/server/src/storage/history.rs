@@ -26,8 +26,9 @@ use super::provenance::{
 };
 use super::workspaces::workspace_dir;
 use projector_domain::{
-    BootstrapSnapshot, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
-    DocumentPathRevision, ManifestEntry, ManifestState, PreviewRedactDocumentBodyHistoryRequest,
+    BootstrapSnapshot, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision,
+    DocumentId, DocumentKind, DocumentPathRevision, ManifestEntry, ManifestState,
+    PreviewPurgeDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryRequest,
     ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, RestoreWorkspaceRequest,
 };
@@ -220,6 +221,31 @@ pub(crate) fn retained_redaction_matches(
     Ok(matches)
 }
 
+pub(crate) fn retained_purge_matches(
+    revisions: impl IntoIterator<Item = FileBodyRevision>,
+    document_id: &str,
+    limit: usize,
+) -> Vec<DocumentBodyPurgeMatch> {
+    let mut matches = revisions
+        .into_iter()
+        .filter(|revision| revision.document_id == document_id)
+        .filter(|revision| !revision.base_text.is_empty() || !revision.body_text.is_empty())
+        .map(|revision| DocumentBodyPurgeMatch {
+            seq: revision.seq,
+            actor_id: revision.actor_id,
+            document_id: revision.document_id,
+            checkpoint_anchor_seq: revision.checkpoint_anchor_seq,
+            history_kind: revision.history_kind.as_str().to_owned(),
+            body_len: revision.body_text.len(),
+            timestamp_ms: revision.timestamp_ms,
+        })
+        .collect::<Vec<_>>();
+    if matches.len() > limit {
+        matches = matches.split_off(matches.len() - limit);
+    }
+    matches
+}
+
 pub(crate) fn ensure_expected_redaction_match_set(
     request: &RedactDocumentBodyHistoryRequest,
     matched_seqs: &[u64],
@@ -232,6 +258,22 @@ pub(crate) fn ensure_expected_redaction_match_set(
     }
     Err(StoreError::new(format!(
         "document {} retained redaction preview is stale: expected seqs {:?}, found {:?}",
+        request.document_id, expected_match_seqs, matched_seqs
+    )))
+}
+
+pub(crate) fn ensure_expected_purge_match_set(
+    request: &PurgeDocumentBodyHistoryRequest,
+    matched_seqs: &[u64],
+) -> Result<(), StoreError> {
+    let Some(expected_match_seqs) = request.expected_match_seqs.as_ref() else {
+        return Ok(());
+    };
+    if expected_match_seqs == matched_seqs {
+        return Ok(());
+    }
+    Err(StoreError::new(format!(
+        "document {} retained purge preview is stale: expected seqs {:?}, found {:?}",
         request.document_id, expected_match_seqs, matched_seqs
     )))
 }
@@ -368,25 +410,46 @@ pub(crate) fn file_preview_redact_document_body_history(
     Ok(matches)
 }
 
-pub(crate) fn file_purge_document_body_history(
+pub(crate) fn file_preview_purge_document_body_history(
     state_dir: &Path,
-    request: &PurgeDocumentBodyHistoryRequest,
-) -> Result<(), StoreError> {
-    let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
-    let mut matched = false;
-    for revision in revisions.iter_mut() {
-        if revision.document_id == request.document_id {
-            revision.base_text.clear();
-            revision.body_text.clear();
-            matched = true;
-        }
-    }
-    if !matched {
+    request: &PreviewPurgeDocumentBodyHistoryRequest,
+) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
+    let matches = retained_purge_matches(
+        file_read_body_revisions(state_dir, &request.workspace_id)?,
+        &request.document_id,
+        request.limit,
+    );
+    if matches.is_empty() {
         return Err(StoreError::new(format!(
             "document {} has no retained body history in workspace {}",
             request.document_id, request.workspace_id
         )));
     }
+    Ok(matches)
+}
+
+pub(crate) fn file_purge_document_body_history(
+    state_dir: &Path,
+    request: &PurgeDocumentBodyHistoryRequest,
+) -> Result<(), StoreError> {
+    let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
+    let mut matched_seqs = Vec::new();
+    for revision in revisions.iter_mut() {
+        if revision.document_id == request.document_id
+            && (!revision.base_text.is_empty() || !revision.body_text.is_empty())
+        {
+            matched_seqs.push(revision.seq);
+            revision.base_text.clear();
+            revision.body_text.clear();
+        }
+    }
+    if matched_seqs.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+    ensure_expected_purge_match_set(request, &matched_seqs)?;
     let encoded =
         serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
     fs::write(
@@ -856,15 +919,80 @@ pub(crate) async fn postgres_preview_redact_document_body_history(
     Ok(matches)
 }
 
+pub(crate) async fn postgres_preview_purge_document_body_history(
+    client: &Client,
+    request: &PreviewPurgeDocumentBodyHistoryRequest,
+) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
+    let rows = client
+        .query(
+            "select seq, actor_id, document_id, checkpoint_anchor_seq, history_kind, base_text, body_text, conflicted, \
+                (extract(epoch from created_at) * 1000)::bigint as timestamp_ms \
+             from document_body_revisions \
+             where workspace_id = $1 and document_id = $2 \
+             order by seq asc",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let revisions = rows
+        .into_iter()
+        .map(|row| {
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok(FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: 0,
+                actor_id: row.get::<_, String>("actor_id"),
+                document_id: row.get::<_, String>("document_id"),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind: kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    let matches = retained_purge_matches(revisions, &request.document_id, request.limit);
+    if matches.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+    Ok(matches)
+}
+
 pub(crate) async fn postgres_purge_document_body_history(
     transaction: &tokio_postgres::Transaction<'_>,
     request: &PurgeDocumentBodyHistoryRequest,
 ) -> Result<(), StoreError> {
+    let matched_rows = transaction
+        .query(
+            "select seq from document_body_revisions \
+             where workspace_id = $1 and document_id = $2 and (base_text <> '' or body_text <> '') \
+             order by seq asc",
+            &[&request.workspace_id, &request.document_id],
+        )
+        .await?;
+    let matched_seqs = matched_rows
+        .into_iter()
+        .map(|row| row.get::<_, i64>(0) as u64)
+        .collect::<Vec<_>>();
+    if matched_seqs.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+    ensure_expected_purge_match_set(request, &matched_seqs)?;
     let matched = transaction
         .execute(
             "update document_body_revisions \
              set base_text = '', body_text = '' \
-             where workspace_id = $1 and document_id = $2",
+             where workspace_id = $1 and document_id = $2 and (base_text <> '' or body_text <> '')",
             &[&request.workspace_id, &request.document_id],
         )
         .await?;

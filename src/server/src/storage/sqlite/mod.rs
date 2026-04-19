@@ -8,8 +8,9 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRedactionMatch,
-    DocumentBodyRevision, DocumentId, DocumentPathRevision, MoveDocumentRequest,
+    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
@@ -137,6 +138,14 @@ impl WorkspaceStore for SqliteWorkspaceStore {
     ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
         let connection = self.connection.lock().expect("sqlite mutex poisoned");
         history::preview_redact_document_body_history(&connection, request)
+    }
+
+    async fn preview_purge_document_body_history(
+        &self,
+        request: &PreviewPurgeDocumentBodyHistoryRequest,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
+        let connection = self.connection.lock().expect("sqlite mutex poisoned");
+        history::preview_purge_document_body_history(&connection, request)
     }
 
     async fn list_path_revisions(

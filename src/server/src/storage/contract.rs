@@ -7,8 +7,9 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRedactionMatch,
-    DocumentBodyRevision, DocumentId, DocumentPathRevision, MoveDocumentRequest,
+    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
@@ -54,6 +55,10 @@ pub trait WorkspaceStore: Send + Sync {
         &self,
         request: &PreviewRedactDocumentBodyHistoryRequest,
     ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError>;
+    async fn preview_purge_document_body_history(
+        &self,
+        request: &PreviewPurgeDocumentBodyHistoryRequest,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError>;
     async fn list_path_revisions(
         &self,
         workspace_id: &str,

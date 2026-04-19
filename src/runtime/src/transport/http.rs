@@ -9,15 +9,16 @@ use std::path::Path;
 use projector_domain::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
-    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
-    ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
-    ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
-    ListSyncEntriesResponse, MoveDocumentRequest, PreviewRedactDocumentBodyHistoryRequest,
-    PreviewRedactDocumentBodyHistoryResponse, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
-    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
-    ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
-    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncContext, SyncEntrySummary,
-    UpdateDocumentRequest,
+    DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
+    DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest,
+    ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
+    ListSyncEntriesRequest, ListSyncEntriesResponse, MoveDocumentRequest,
+    PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
+    PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
+    ProvenanceEvent, PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest,
+    ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
+    ResolveHistoricalPathResponse, RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
+    SyncContext, SyncEntrySummary, UpdateDocumentRequest,
 };
 
 use super::Transport;
@@ -421,6 +422,7 @@ impl Transport for HttpTransport {
         &mut self,
         binding: &dyn SyncContext,
         document_id: &DocumentId,
+        expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         let response = self
             .client
@@ -429,6 +431,7 @@ impl Transport for HttpTransport {
                 workspace_id: binding.workspace_id().as_str().to_owned(),
                 actor_id: binding.actor_id().as_str().to_owned(),
                 document_id: document_id.as_str().to_owned(),
+                expected_match_seqs: expected_match_seqs.map(|seqs| seqs.to_vec()),
             })
             .send()
             .map_err(io::Error::other)?;
@@ -438,6 +441,35 @@ impl Transport for HttpTransport {
         }
 
         Ok(())
+    }
+
+    fn preview_purge_document_body_history(
+        &mut self,
+        binding: &dyn SyncContext,
+        document_id: &DocumentId,
+        limit: usize,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, Self::Error> {
+        let response = self
+            .client
+            .post(format!("{}/history/body/purge/preview", self.base_url))
+            .json(&PreviewPurgeDocumentBodyHistoryRequest {
+                workspace_id: binding.workspace_id().as_str().to_owned(),
+                document_id: document_id.as_str().to_owned(),
+                limit,
+            })
+            .send()
+            .map_err(io::Error::other)?;
+
+        if !response.status().is_success() {
+            return Err(response_error(
+                "preview purge body history request",
+                response,
+            ));
+        }
+
+        let payload: PreviewPurgeDocumentBodyHistoryResponse =
+            response.json().map_err(io::Error::other)?;
+        Ok(payload.matches)
     }
 
     fn restore_workspace_at_cursor(

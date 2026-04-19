@@ -15,7 +15,8 @@ use projector_domain::{
     ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
     ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
     ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
-    ListSyncEntriesResponse, MoveDocumentRequest, PreviewRedactDocumentBodyHistoryRequest,
+    ListSyncEntriesResponse, MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
+    PreviewPurgeDocumentBodyHistoryResponse, PreviewRedactDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryResponse, PurgeDocumentBodyHistoryRequest,
     ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
     ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
@@ -44,6 +45,10 @@ pub(super) fn app(store: Arc<dyn WorkspaceStore>) -> Router {
         .route(
             "/history/body/redact/preview",
             post(preview_redact_body_history),
+        )
+        .route(
+            "/history/body/purge/preview",
+            post(preview_purge_body_history),
         )
         .route("/history/body/redact", post(redact_body_history))
         .route("/history/body/purge", post(purge_body_history))
@@ -249,6 +254,19 @@ async fn preview_redact_body_history(
         .map_err(store_error_response)?;
 
     Ok(Json(PreviewRedactDocumentBodyHistoryResponse { matches }))
+}
+
+async fn preview_purge_body_history(
+    State(state): State<AppState>,
+    Json(request): Json<PreviewPurgeDocumentBodyHistoryRequest>,
+) -> Result<Json<PreviewPurgeDocumentBodyHistoryResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let matches = state
+        .store
+        .preview_purge_document_body_history(&request)
+        .await
+        .map_err(store_error_response)?;
+
+    Ok(Json(PreviewPurgeDocumentBodyHistoryResponse { matches }))
 }
 
 async fn purge_body_history(

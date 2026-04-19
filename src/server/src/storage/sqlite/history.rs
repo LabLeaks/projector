@@ -4,7 +4,8 @@ Owns SQLite event and revision reads for list, discovery, and historical path re
 */
 // @fileimplements PROJECTOR.SERVER.SQLITE_HISTORY
 use projector_domain::{
-    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
+    DocumentPathRevision, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, ProvenanceEventKind,
     PurgeDocumentBodyHistoryRequest, RedactDocumentBodyHistoryRequest,
 };
@@ -122,6 +123,24 @@ pub(super) fn preview_redact_document_body_history(
     Ok(matches)
 }
 
+pub(super) fn preview_purge_document_body_history(
+    connection: &Connection,
+    request: &PreviewPurgeDocumentBodyHistoryRequest,
+) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
+    let matches = super::super::history::retained_purge_matches(
+        read_body_revisions(connection, &request.workspace_id)?,
+        &request.document_id,
+        request.limit,
+    );
+    if matches.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history in workspace {}",
+            request.document_id, request.workspace_id
+        )));
+    }
+    Ok(matches)
+}
+
 pub(super) fn list_path_revisions(
     connection: &Connection,
     workspace_id: &str,
@@ -177,18 +196,30 @@ pub(super) fn purge_document_body_history(
     connection: &rusqlite::Transaction<'_>,
     request: &PurgeDocumentBodyHistoryRequest,
 ) -> Result<(), StoreError> {
-    let matched = connection.execute(
-        "update body_revisions \
-         set revision_json = json_set(revision_json, '$.base_text', '', '$.body_text', '') \
-         where workspace_id = ?1 and json_extract(revision_json, '$.document_id') = ?2",
-        params![request.workspace_id, request.document_id],
-    )?;
-    if matched == 0 {
+    let matched_seqs = read_body_revisions(connection, &request.workspace_id)?
+        .into_iter()
+        .filter(|revision| {
+            revision.document_id == request.document_id
+                && (!revision.base_text.is_empty() || !revision.body_text.is_empty())
+        })
+        .map(|revision| revision.seq)
+        .collect::<Vec<_>>();
+    if matched_seqs.is_empty() {
         return Err(StoreError::new(format!(
             "document {} has no retained body history in workspace {}",
             request.document_id, request.workspace_id
         )));
     }
+    super::super::history::ensure_expected_purge_match_set(request, &matched_seqs)?;
+
+    let matched = connection.execute(
+        "update body_revisions \
+         set revision_json = json_set(revision_json, '$.base_text', '', '$.body_text', '') \
+         where workspace_id = ?1 and json_extract(revision_json, '$.document_id') = ?2 \
+           and (json_extract(revision_json, '$.base_text') <> '' or json_extract(revision_json, '$.body_text') <> '')",
+        params![request.workspace_id, request.document_id],
+    )?;
+    debug_assert!(matched > 0);
 
     let live_path = connection
         .query_row(

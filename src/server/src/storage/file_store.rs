@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRedactionMatch,
-    DocumentBodyRevision, DocumentId, DocumentPathRevision, MoveDocumentRequest,
+    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
@@ -131,6 +132,13 @@ impl WorkspaceStore for FileWorkspaceStore {
         request: &PreviewRedactDocumentBodyHistoryRequest,
     ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
         history::file_preview_redact_document_body_history(&self.state_dir, request)
+    }
+
+    async fn preview_purge_document_body_history(
+        &self,
+        request: &PreviewPurgeDocumentBodyHistoryRequest,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
+        history::file_preview_purge_document_body_history(&self.state_dir, request)
     }
 
     async fn list_path_revisions(

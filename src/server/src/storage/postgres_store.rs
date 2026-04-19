@@ -5,8 +5,9 @@ Owns the Postgres-backed workspace store adapter, connection/migration bootstrap
 // @fileimplements PROJECTOR.SERVER.POSTGRES_STORE
 use async_trait::async_trait;
 use projector_domain::{
-    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyRedactionMatch,
-    DocumentBodyRevision, DocumentId, DocumentPathRevision, MoveDocumentRequest,
+    BootstrapSnapshot, CreateDocumentRequest, DeleteDocumentRequest, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentPathRevision,
+    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
     PreviewRedactDocumentBodyHistoryRequest, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
     RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
     RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SyncEntryKind, SyncEntrySummary,
@@ -150,6 +151,14 @@ impl WorkspaceStore for PostgresWorkspaceStore {
     ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
         let client = self.client.lock().await;
         history::postgres_preview_redact_document_body_history(&client, request).await
+    }
+
+    async fn preview_purge_document_body_history(
+        &self,
+        request: &PreviewPurgeDocumentBodyHistoryRequest,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
+        let client = self.client.lock().await;
+        history::postgres_preview_purge_document_body_history(&client, request).await
     }
 
     async fn list_path_revisions(

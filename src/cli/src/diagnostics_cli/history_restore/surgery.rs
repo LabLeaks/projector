@@ -90,32 +90,19 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let purge_args = parse_purge_args(&args)?;
     let mut prepared = prepare_document_history_surgery(&purge_args.repo_relative_path)?;
-    let revisions =
-        prepared
-            .transport
-            .list_body_revisions(&prepared.binding, &prepared.document_id, 20)?;
-    if revisions.is_empty() {
-        return Err(format!(
-            "document at {} does not have any retained body revisions",
-            prepared.requested_path.display()
-        )
-        .into());
-    }
-    let clearable_revisions = revisions
-        .iter()
-        .filter(|revision| !revision.base_text.is_empty() || !revision.body_text.is_empty())
-        .collect::<Vec<_>>();
+    let clearable_revisions = prepared.transport.preview_purge_document_body_history(
+        &prepared.binding,
+        &prepared.document_id,
+        20,
+    )?;
 
     println!("path: {}", prepared.requested_path.display());
     println!("document_id: {}", prepared.document_id.as_str());
-    println!("retained_revisions: {}", revisions.len());
     println!("clearable_revisions: {}", clearable_revisions.len());
     for revision in &clearable_revisions {
         println!(
             "revision: seq={} kind={} body_len={}",
-            revision.seq,
-            revision.history_kind,
-            revision.body_text.len()
+            revision.seq, revision.history_kind, revision.body_len
         );
     }
 
@@ -127,9 +114,15 @@ pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    prepared
-        .transport
-        .purge_document_body_history(&prepared.binding, &prepared.document_id)?;
+    let expected_match_seqs = clearable_revisions
+        .iter()
+        .map(|revision| revision.seq)
+        .collect::<Vec<_>>();
+    prepared.transport.purge_document_body_history(
+        &prepared.binding,
+        &prepared.document_id,
+        Some(&expected_match_seqs),
+    )?;
     println!("purge: applied");
     Ok(())
 }

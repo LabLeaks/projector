@@ -183,10 +183,34 @@ pub struct PreviewRedactDocumentBodyHistoryResponse {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DocumentBodyPurgeMatch {
+    pub seq: u64,
+    pub actor_id: String,
+    pub document_id: String,
+    pub checkpoint_anchor_seq: Option<u64>,
+    pub history_kind: String,
+    pub body_len: usize,
+    pub timestamp_ms: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PreviewPurgeDocumentBodyHistoryRequest {
+    pub workspace_id: String,
+    pub document_id: String,
+    pub limit: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PreviewPurgeDocumentBodyHistoryResponse {
+    pub matches: Vec<DocumentBodyPurgeMatch>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PurgeDocumentBodyHistoryRequest {
     pub workspace_id: String,
     pub actor_id: String,
     pub document_id: String,
+    pub expected_match_seqs: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

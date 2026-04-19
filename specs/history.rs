@@ -87,6 +87,12 @@ Server history storage can retain checkpointed document body snapshots together 
 @spec PROJECTOR.SERVER.HISTORY.REDACTS_RETAINED_BODY_HISTORY
 `POST /history/body/redact` can rewrite one document's retained checkpoints and update history for a document id by replacing exact matched text with `[REDACTED]` while preserving readable retained history.
 
+@spec PROJECTOR.SERVER.HISTORY.PREVIEWS_PURGE_MATCHES
+`POST /history/body/purge/preview` returns the retained revisions whose body content would be cleared by one purge request so clients can preview purge impact without deriving clearable rows from raw history rows themselves.
+
+@spec PROJECTOR.SERVER.HISTORY.REJECTS_STALE_PURGE_PREVIEW
+`POST /history/body/purge` can require the exact retained revision seq set returned by a prior purge preview and rejects the purge if the clearable retained revision set has changed since that preview.
+
 @spec PROJECTOR.SERVER.HISTORY.PURGES_DOCUMENT_RETAINED_BODY_HISTORY
 `POST /history/body/purge` can purge one document's retained historical body content for a document id without deleting the surrounding non-secret audit record that history surgery happened.
 

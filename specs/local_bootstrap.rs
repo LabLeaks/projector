@@ -10,10 +10,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use projector_domain::{
-    ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyRedactionMatch,
-    DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathRevision, ListBodyRevisionsRequest,
-    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
-    ListPathRevisionsResponse, ManifestEntry, ManifestState,
+    ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
+    DocumentPathRevision, ListBodyRevisionsRequest, ListBodyRevisionsResponse, ListEventsRequest,
+    ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse, ManifestEntry,
+    ManifestState, PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
     PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
     ProjectionRoots, ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
     ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
@@ -660,6 +661,28 @@ fn preview_redact_body_history(
         .matches
 }
 
+fn preview_purge_body_history(
+    addr: &str,
+    workspace_id: &str,
+    document_id: &str,
+    limit: usize,
+) -> Vec<DocumentBodyPurgeMatch> {
+    reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/history/body/purge/preview"))
+        .json(&PreviewPurgeDocumentBodyHistoryRequest {
+            workspace_id: workspace_id.to_owned(),
+            document_id: document_id.to_owned(),
+            limit,
+        })
+        .send()
+        .expect("send body history purge preview request")
+        .error_for_status()
+        .expect("body history purge preview response status")
+        .json::<PreviewPurgeDocumentBodyHistoryResponse>()
+        .expect("decode body history purge preview response")
+        .matches
+}
+
 fn purge_body_history(addr: &str, workspace_id: &str, actor_id: &str, document_id: &str) {
     reqwest::blocking::Client::new()
         .post(format!("http://{addr}/history/body/purge"))
@@ -667,11 +690,36 @@ fn purge_body_history(addr: &str, workspace_id: &str, actor_id: &str, document_i
             workspace_id: workspace_id.to_owned(),
             actor_id: actor_id.to_owned(),
             document_id: document_id.to_owned(),
+            expected_match_seqs: None,
         })
         .send()
         .expect("send body history purge request")
         .error_for_status()
         .expect("body history purge response status");
+}
+
+fn purge_body_history_failure(
+    addr: &str,
+    workspace_id: &str,
+    actor_id: &str,
+    document_id: &str,
+    expected_match_seqs: Option<&[u64]>,
+) -> String {
+    let response = reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/history/body/purge"))
+        .json(&PurgeDocumentBodyHistoryRequest {
+            workspace_id: workspace_id.to_owned(),
+            actor_id: actor_id.to_owned(),
+            document_id: document_id.to_owned(),
+            expected_match_seqs: expected_match_seqs.map(|seqs| seqs.to_vec()),
+        })
+        .send()
+        .expect("send body history purge failure request");
+    assert!(
+        !response.status().is_success(),
+        "body history purge unexpectedly succeeded"
+    );
+    response.text().expect("decode purge failure body")
 }
 
 fn redact_body_history(
@@ -988,6 +1036,15 @@ impl Transport for RejectCreateTransport {
         Ok(Vec::new())
     }
 
+    fn preview_purge_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _limit: usize,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, Self::Error> {
+        Ok(Vec::new())
+    }
+
     fn list_path_revisions(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1039,6 +1096,7 @@ impl Transport for RejectCreateTransport {
         &mut self,
         _binding: &dyn SyncContext,
         _document_id: &DocumentId,
+        _expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -1173,6 +1231,15 @@ impl Transport for RetryAfterRebootstrapTransport {
         Ok(Vec::new())
     }
 
+    fn preview_purge_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _limit: usize,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, Self::Error> {
+        Ok(Vec::new())
+    }
+
     fn list_path_revisions(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1224,6 +1291,7 @@ impl Transport for RetryAfterRebootstrapTransport {
         &mut self,
         _binding: &dyn SyncContext,
         _document_id: &DocumentId,
+        _expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -1356,6 +1424,15 @@ impl Transport for RetryImmediatelyTransport {
         Ok(Vec::new())
     }
 
+    fn preview_purge_document_body_history(
+        &mut self,
+        _binding: &dyn SyncContext,
+        _document_id: &DocumentId,
+        _limit: usize,
+    ) -> Result<Vec<DocumentBodyPurgeMatch>, Self::Error> {
+        Ok(Vec::new())
+    }
+
     fn list_path_revisions(
         &mut self,
         _binding: &dyn SyncContext,
@@ -1407,6 +1484,7 @@ impl Transport for RetryImmediatelyTransport {
         &mut self,
         _binding: &dyn SyncContext,
         _document_id: &DocumentId,
+        _expected_match_seqs: Option<&[u64]>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -4018,6 +4096,122 @@ fn server_can_purge_retained_document_body_history_for_one_document() {
     assert_eq!(live_body.text, "<p>updated revision</p>\n");
 }
 
+// @verifies PROJECTOR.SERVER.HISTORY.PREVIEWS_PURGE_MATCHES
+#[test]
+fn server_lists_retained_purge_matches() {
+    let repo = temp_repo("body-history-purge-preview");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    let workspace_id = first_sync
+        .lines()
+        .find_map(|line| line.strip_prefix("workspace_id: "))
+        .expect("workspace id")
+        .to_owned();
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/history-purge-preview.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    fs::write(
+        repo.join("private/briefs/history-purge-preview.html"),
+        "<p>updated revision</p>\n",
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap");
+    let document_id = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| {
+            !entry.deleted
+                && entry.mount_relative_path == Path::new("private")
+                && entry.relative_path == Path::new("briefs/history-purge-preview.html")
+        })
+        .expect("created entry")
+        .document_id
+        .as_str()
+        .to_owned();
+
+    let matches = preview_purge_body_history(&addr, &workspace_id, &document_id, 10);
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(matches[1].history_kind, "yrs_text_update_v1");
+    assert!(matches.iter().all(|entry| entry.body_len > 0));
+}
+
+// @verifies PROJECTOR.SERVER.HISTORY.REJECTS_STALE_PURGE_PREVIEW
+#[test]
+fn server_purge_rejects_stale_previewed_match_set() {
+    let repo = temp_repo("body-history-purge-stale-preview");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    let first_sync = run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+    let workspace_id = first_sync
+        .lines()
+        .find_map(|line| line.strip_prefix("workspace_id: "))
+        .expect("workspace id")
+        .to_owned();
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/history-purge-stale-preview.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let binding = load_workspace_binding_from_sync_config(&repo);
+    let mut transport = HttpTransport::new(format!("http://{addr}"));
+    let (snapshot, _) = transport.bootstrap(&binding).expect("bootstrap");
+    let document_id = snapshot
+        .manifest
+        .entries
+        .iter()
+        .find(|entry| {
+            !entry.deleted
+                && entry.mount_relative_path == Path::new("private")
+                && entry.relative_path == Path::new("briefs/history-purge-stale-preview.html")
+        })
+        .expect("created entry")
+        .document_id
+        .as_str()
+        .to_owned();
+
+    let matches = preview_purge_body_history(&addr, &workspace_id, &document_id, 10);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].seq, 1);
+
+    fs::write(
+        repo.join("private/briefs/history-purge-stale-preview.html"),
+        "<p>updated revision</p>\n",
+    )
+    .expect("write update");
+    run_projector(&repo, &["sync"]);
+
+    let failure = purge_body_history_failure(
+        &addr,
+        &workspace_id,
+        binding.actor_id.as_str(),
+        &document_id,
+        Some(&[matches[0].seq]),
+    );
+    assert!(failure.contains("retained purge preview is stale"));
+    assert!(failure.contains("expected seqs [1], found [1, 2]"));
+}
+
 // @verifies PROJECTOR.SERVER.HISTORY.RECORDS_DESTRUCTIVE_HISTORY_SURGERY
 #[test]
 fn server_records_a_non_secret_audit_event_for_history_purge() {
@@ -4526,7 +4720,6 @@ fn assert_projector_purge_clears_retained_history_and_records_audit() {
 
     let preview = run_projector(&repo, &["purge", "private/briefs/cli-purge.html"]);
     assert!(preview.contains("path: private/briefs/cli-purge.html"));
-    assert!(preview.contains("retained_revisions: 2"));
     assert!(preview.contains("clearable_revisions: 2"));
     assert!(preview.contains("revision: seq=1 kind=yrs_text_checkpoint_v1"));
     assert!(preview.contains("revision: seq=2 kind=yrs_text_update_v1"));
