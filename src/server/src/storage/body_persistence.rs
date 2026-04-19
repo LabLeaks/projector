@@ -187,23 +187,51 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         &self,
         document_id: &str,
     ) -> Result<CanonicalBodyState, StoreError> {
-        Ok(self
+        let Some(row) = self
             .transaction
             .query_opt(
-                "select state_kind, body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
+                "select state_kind, body_text, yjs_state, compacted_through_seq \
+                 from document_body_snapshots where workspace_id = $1 and document_id = $2",
                 &[&self.workspace_id, &document_id],
             )
             .await?
-            .map(|row| {
-                let kind =
-                    CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
-                        .map_err(StoreError::new)?;
-                FULL_TEXT_BODY_MODEL
-                    .state_from_storage_record(kind, row.get::<_, String>("body_text"))
-                    .map_err(StoreError::new)
-            })
-            .transpose()?
-            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state()))
+        else {
+            return Ok(FULL_TEXT_BODY_MODEL.empty_state());
+        };
+
+        let kind = CanonicalBodyStateKind::parse(row.get::<_, String>("state_kind").as_str())
+            .map_err(StoreError::new)?;
+        let body_text = row.get::<_, String>("body_text");
+        let compacted_through_seq = row.get::<_, i64>("compacted_through_seq") as u64;
+
+        if kind != CanonicalBodyStateKind::YrsTextCheckpointV1 {
+            return FULL_TEXT_BODY_MODEL
+                .state_from_storage_record(kind, body_text)
+                .map_err(StoreError::new);
+        }
+
+        let base_checkpoint = if let Some(yjs_state) = row.get::<_, Option<Vec<u8>>>("yjs_state") {
+            YrsTextCheckpoint::from_checkpoint_bytes(yjs_state).map_err(StoreError::new)?
+        } else {
+            YrsTextCheckpoint::from_storage_payload(&body_text).map_err(StoreError::new)?
+        };
+        let update_rows = self
+            .transaction
+            .query(
+                "select update_blob \
+                 from document_body_updates \
+                 where workspace_id = $1 and document_id = $2 and seq > $3 \
+                 order by seq asc",
+                &[&self.workspace_id, &document_id, &(compacted_through_seq as i64)],
+            )
+            .await?;
+        let checkpoint = update_rows.into_iter().try_fold(base_checkpoint, |checkpoint, row| {
+            checkpoint.with_update_v1(&row.get::<_, Vec<u8>>("update_blob"))
+        })
+        .map_err(StoreError::new)?;
+        FULL_TEXT_BODY_MODEL
+            .state_from_yrs_checkpoint(checkpoint)
+            .map_err(StoreError::new)
     }
 
     async fn write_current_state(
@@ -211,25 +239,20 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         document_id: &str,
         state: &CanonicalBodyState,
     ) -> Result<(), StoreError> {
-        let (yjs_state, state_vector) = postgres_checkpoint_artifacts(state)?;
         self.transaction
             .execute(
                 "insert into document_body_snapshots \
                  (document_id, workspace_id, state_kind, body_text, yjs_state, state_vector, compacted_through_seq) \
-                 values ($1, $2, $3, $4, $5, $6, 0) \
+                 values ($1, $2, $3, $4, null, null, 0) \
                  on conflict (document_id) do update set \
                    state_kind = excluded.state_kind, \
                    body_text = excluded.body_text, \
-                   yjs_state = excluded.yjs_state, \
-                   state_vector = excluded.state_vector, \
                    updated_at = now()",
                 &[
                     &document_id,
                     &self.workspace_id,
                     &state.kind().as_str(),
                     &state.storage_payload(),
-                    &yjs_state,
-                    &state_vector,
                 ],
             )
             .await?;
@@ -243,29 +266,30 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
         document_id: &str,
         payload: &RetainedBodyHistoryPayload,
     ) -> Result<(), StoreError> {
-        let checkpoint_anchor_seq =
-            if payload.kind() == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1 {
-                self.transaction
-                    .query_opt(
-                        "select seq, checkpoint_anchor_seq, history_kind \
+        let checkpoint_anchor_seq = if payload.kind()
+            == super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1
+        {
+            self.transaction
+                .query_opt(
+                    "select seq, checkpoint_anchor_seq, history_kind \
                      from document_body_revisions \
                      where workspace_id = $1 and document_id = $2 \
                      order by seq desc \
                      limit 1",
-                        &[&self.workspace_id, &document_id],
-                    )
-                    .await?
-                    .and_then(|row| {
-                        row.get::<_, Option<i64>>("checkpoint_anchor_seq")
-                            .map(|seq| seq as u64)
-                            .or_else(|| match row.get::<_, String>("history_kind").as_str() {
-                                "yrs_text_update_v1" => None,
-                                _ => Some(row.get::<_, i64>("seq") as u64),
-                            })
-                    })
-            } else {
-                Some(event_cursor)
-            };
+                    &[&self.workspace_id, &document_id],
+                )
+                .await?
+                .and_then(|row| {
+                    row.get::<_, Option<i64>>("checkpoint_anchor_seq")
+                        .map(|seq| seq as u64)
+                        .or_else(|| match row.get::<_, String>("history_kind").as_str() {
+                            "yrs_text_update_v1" => None,
+                            _ => Some(row.get::<_, i64>("seq") as u64),
+                        })
+                })
+        } else {
+            Some(event_cursor)
+        };
         insert_body_revision_tx(
             self.transaction,
             self.workspace_id,
@@ -276,18 +300,80 @@ impl AsyncBodyPersistence for PostgresBodyPersistence<'_> {
             payload,
         )
         .await?;
-        if payload.kind() != super::body_state::RetainedBodyHistoryKind::YrsTextUpdateV1 {
+
+        if let Some(update_blob) = payload.yrs_update_v1_bytes().map_err(StoreError::new)? {
             self.transaction
                 .execute(
-                    "update document_body_snapshots \
-                     set compacted_through_seq = $3, updated_at = now() \
-                     where workspace_id = $1 and document_id = $2",
-                    &[&self.workspace_id, &document_id, &(event_cursor as i64)],
+                    "insert into document_body_updates (document_id, workspace_id, actor_id, update_blob) \
+                     values ($1, $2, $3, $4)",
+                    &[&document_id, &self.workspace_id, &actor_id, &update_blob],
                 )
                 .await?;
+        } else {
+            sync_postgres_checkpoint_metadata(
+                self.transaction,
+                self.workspace_id,
+                document_id,
+            )
+            .await?;
         }
         Ok(())
     }
+}
+
+async fn sync_postgres_checkpoint_metadata(
+    transaction: &tokio_postgres::Transaction<'_>,
+    workspace_id: &str,
+    document_id: &str,
+) -> Result<(), StoreError> {
+    let Some(snapshot_row) = transaction
+        .query_opt(
+            "select state_kind, body_text from document_body_snapshots where workspace_id = $1 and document_id = $2",
+            &[&workspace_id, &document_id],
+        )
+        .await?
+    else {
+        return Ok(());
+    };
+    let kind = CanonicalBodyStateKind::parse(snapshot_row.get::<_, String>("state_kind").as_str())
+        .map_err(StoreError::new)?;
+    let body_text = snapshot_row.get::<_, String>("body_text");
+    let state = FULL_TEXT_BODY_MODEL
+        .state_from_storage_record(kind, body_text)
+        .map_err(StoreError::new)?;
+    let (yjs_state, state_vector) = postgres_checkpoint_artifacts(&state)?;
+    let compacted_through_seq = transaction
+        .query_one(
+            "select coalesce(max(seq), 0) as max_seq from document_body_updates \
+             where workspace_id = $1 and document_id = $2",
+            &[&workspace_id, &document_id],
+        )
+        .await?
+        .get::<_, i64>("max_seq");
+    transaction
+        .execute(
+            "update document_body_snapshots \
+             set yjs_state = $3, state_vector = $4, compacted_through_seq = $5, updated_at = now() \
+             where workspace_id = $1 and document_id = $2",
+            &[
+                &workspace_id,
+                &document_id,
+                &yjs_state,
+                &state_vector,
+                &compacted_through_seq,
+            ],
+        )
+        .await?;
+    if compacted_through_seq > 0 {
+        transaction
+            .execute(
+                "delete from document_body_updates \
+                 where workspace_id = $1 and document_id = $2 and seq <= $3",
+                &[&workspace_id, &document_id, &compacted_through_seq],
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 fn postgres_checkpoint_artifacts(

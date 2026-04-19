@@ -392,6 +392,15 @@ impl RetainedBodyHistoryPayload {
             .unwrap_or_else(|_| self.materialized_body_state())
     }
 
+    pub(crate) fn yrs_update_v1_bytes(&self) -> Result<Option<Vec<u8>>, String> {
+        if self.kind != RetainedBodyHistoryKind::YrsTextUpdateV1 {
+            return Ok(None);
+        }
+        let stored: StoredYrsTextUpdateV1 = serde_json::from_str(&self.storage_payload)
+            .map_err(|err| format!("parse stored yrs update payload: {err}"))?;
+        Ok(Some(decode_hex(&stored.update_v1_hex)?))
+    }
+
     pub(crate) fn to_public_revision(
         &self,
         seq: u64,
