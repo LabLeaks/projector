@@ -24,6 +24,9 @@ Executable regression and contract-proof surface under `tests/`.
 ### `@area PROJECTOR.TESTS.SUPPORT`
 Shared test-support surface under `tests/support/`.
 
+### `@area PROJECTOR.QUALITY`
+Local quality-gate tooling that audits release readiness without publishing artifacts.
+
 ### `@area PROJECTOR.RUNTIME.BODY_SYNC`
 The body-sync layer now reconciles concurrent UTF-8 text edits through per-document `yrs` state instead of the old three-way-merge fallback.
 See [BODY_CRDT_DECISION.md](/Users/gk/work/lableaks/projects/projector/BODY_CRDT_DECISION.md) for the current package choice rationale.

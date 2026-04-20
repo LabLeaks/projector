@@ -395,7 +395,7 @@ fn release_tag_dry_run_lists_checklist_and_publication_commands() {
         .collect();
     assert_eq!(
         checklist_ids,
-        vec!["readme", "changelog", "version", "validation"]
+        vec!["readme", "changelog", "version", "validation", "release_review"]
     );
     assert_eq!(
         payload["push_main_command"]

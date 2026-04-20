@@ -37,6 +37,10 @@ CHECKLIST = [
         "id": "validation",
         "prompt": "Ran core validation (`cargo test`, `special lint`, `special specs`)?",
     },
+    {
+        "id": "release_review",
+        "prompt": "Ran the local release review and looked at any warn-level findings?",
+    },
 ]
 GITHUB_RELEASE_POLL_SECONDS = 10
 GITHUB_RELEASE_TIMEOUT_SECONDS = 15 * 60

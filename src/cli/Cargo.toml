@@ -25,6 +25,10 @@ path = "../../tests/postgres_bootstrap.rs"
 name = "release_pipeline"
 path = "../../tests/release_pipeline.rs"
 
+[[test]]
+name = "quality_release_review"
+path = "../../tests/quality_release_review.rs"
+
 [dependencies]
 crossterm = "0.28"
 libc = "0.2"

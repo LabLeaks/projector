@@ -1,6 +1,6 @@
 /**
 @spec PROJECTOR.DISTRIBUTION.RELEASE_FLOW.CHECKLIST
-Before publishing, projector's local release script interactively confirms easy-to-forget release tasks such as updating public docs, updating `CHANGELOG.md`, bumping workspace package versions, and running core validation.
+Before publishing, projector's local release script interactively confirms easy-to-forget release tasks such as updating public docs, updating `CHANGELOG.md`, bumping workspace package versions, running core validation, and running the local release-review pass.
 
 @spec PROJECTOR.DISTRIBUTION.RELEASE_FLOW.DRY_RUN
 Projector's local release script dry-run prints the prerelease checklist and publication commands without moving the `main` bookmark, creating a tag, pushing to origin, or updating Homebrew.
