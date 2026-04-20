@@ -414,18 +414,18 @@ impl RetainedBodyHistoryPayload {
         base_text: impl Into<String>,
         updates_v1: &[Vec<u8>],
         materialized_text: impl Into<String>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let materialized_text = materialized_text.into();
-        Self {
+        Ok(Self {
             kind: RetainedBodyHistoryKind::YrsTextUpdateV1,
             base_text: base_text.into(),
             storage_payload: serde_json::to_string(&StoredYrsTextUpdateV1::from_updates_v1(
                 updates_v1,
             ))
-            .expect("yrs text update payload should serialize"),
+            .map_err(|err| format!("serialize yrs text update payload: {err}"))?,
             materialized_text,
             conflicted: false,
-        }
+        })
     }
 
     pub(crate) fn base_text(&self) -> &str {
@@ -569,11 +569,9 @@ impl BodyStateModel for FullTextBodyModel {
 
     fn state_from_materialized_text(&self, text: impl Into<String>) -> CanonicalBodyState {
         let text = text.into();
-        self.state_from_yrs_checkpoint(
-            YrsTextCheckpoint::from_materialized_text(&text)
-                .expect("materialized UTF-8 text should convert into a yrs checkpoint"),
-        )
-        .expect("yrs checkpoint should materialize into canonical text state")
+        YrsTextCheckpoint::from_materialized_text(&text)
+            .and_then(|checkpoint| self.state_from_yrs_checkpoint(checkpoint))
+            .unwrap_or_else(|_| CanonicalBodyState::full_text_merge_v1(text))
     }
 
     fn state_from_yrs_checkpoint(
@@ -610,18 +608,30 @@ impl BodyStateModel for FullTextBodyModel {
         if conflicted {
             RetainedBodyHistoryPayload::full_text_revision_v1(base_text, materialized_text, true)
         } else {
-            let updates_v1 = YrsTextCheckpoint::from_materialized_text(&base_text)
-                .expect("base text should convert into a yrs checkpoint")
-                .update_to_text_v1(
+            match YrsTextCheckpoint::from_materialized_text(&base_text).and_then(|checkpoint| {
+                checkpoint.update_to_text_v1(
                     &materialized_text,
                     yrs_operation_client_id("projector-history", &base_text, &materialized_text),
                 )
-                .expect("next text should produce yrs incremental updates");
-            RetainedBodyHistoryPayload::yrs_text_update_v1(
-                base_text,
-                &updates_v1,
-                materialized_text,
-            )
+            }) {
+                Ok(updates_v1) => RetainedBodyHistoryPayload::yrs_text_update_v1(
+                    base_text.clone(),
+                    &updates_v1,
+                    materialized_text.clone(),
+                )
+                .unwrap_or_else(|_| {
+                    RetainedBodyHistoryPayload::full_text_revision_v1(
+                        base_text,
+                        materialized_text,
+                        false,
+                    )
+                }),
+                Err(_) => RetainedBodyHistoryPayload::full_text_revision_v1(
+                    base_text,
+                    materialized_text,
+                    false,
+                ),
+            }
         }
     }
 
@@ -632,12 +642,13 @@ impl BodyStateModel for FullTextBodyModel {
     ) -> RetainedBodyHistoryPayload {
         let base_text = base_text.into();
         let materialized_text = materialized_text.into();
-        RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
-            base_text,
-            YrsTextCheckpoint::from_materialized_text(&materialized_text)
-                .expect("materialized UTF-8 text should convert into a yrs checkpoint"),
-        )
-        .expect("yrs checkpoint should materialize into retained history payload")
+        YrsTextCheckpoint::from_materialized_text(&materialized_text)
+            .and_then(|checkpoint| {
+                RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(base_text.clone(), checkpoint)
+            })
+            .unwrap_or_else(|_| {
+                RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text)
+            })
     }
 
     fn history_from_storage_record(
@@ -663,12 +674,20 @@ impl BodyStateModel for FullTextBodyModel {
                 if storage_payload.is_empty() {
                     return RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, "");
                 }
-                RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
-                    base_text,
-                    YrsTextCheckpoint::from_storage_payload(&storage_payload)
-                        .expect("stored yrs history payload should decode"),
-                )
-                .expect("stored yrs history payload should materialize")
+                let base_text = base_text.into();
+                YrsTextCheckpoint::from_storage_payload(&storage_payload)
+                    .and_then(|checkpoint| {
+                        RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
+                            base_text.clone(),
+                            checkpoint,
+                        )
+                    })
+                    .unwrap_or_else(|_| {
+                        RetainedBodyHistoryPayload::full_text_checkpoint_v1(
+                            base_text.clone(),
+                            base_text,
+                        )
+                    })
             }
             RetainedBodyHistoryKind::YrsTextUpdateV1 => {
                 let base_text = base_text.into();
@@ -676,22 +695,27 @@ impl BodyStateModel for FullTextBodyModel {
                 if storage_payload.is_empty() {
                     return RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, "");
                 }
-                let stored: StoredYrsTextUpdateV1 = serde_json::from_str(&storage_payload)
-                    .expect("stored yrs update payload should parse");
-                let updates_v1 = stored
-                    .decode_updates_v1()
-                    .expect("stored yrs update payload should decode");
-                let materialized_text = YrsTextCheckpoint::from_materialized_text(&base_text)
-                    .expect("base text should convert into a yrs checkpoint")
-                    .with_update_sequence_v1(&updates_v1)
-                    .expect("stored yrs update payload should apply")
-                    .materialized_text()
-                    .expect("stored yrs update payload should materialize");
-                RetainedBodyHistoryPayload::yrs_text_update_v1(
-                    base_text,
-                    &updates_v1,
-                    materialized_text,
-                )
+                let decoded = serde_json::from_str::<StoredYrsTextUpdateV1>(&storage_payload)
+                    .map_err(|err| format!("parse stored yrs update payload: {err}"))
+                    .and_then(|stored| stored.decode_updates_v1())
+                    .and_then(|updates_v1| {
+                        YrsTextCheckpoint::from_materialized_text(&base_text)
+                            .and_then(|checkpoint| checkpoint.with_update_sequence_v1(&updates_v1))
+                            .and_then(|checkpoint| checkpoint.materialized_text())
+                            .and_then(|materialized_text| {
+                                RetainedBodyHistoryPayload::yrs_text_update_v1(
+                                    base_text.clone(),
+                                    &updates_v1,
+                                    materialized_text,
+                                )
+                            })
+                    });
+                decoded.unwrap_or_else(|_| {
+                    RetainedBodyHistoryPayload::full_text_checkpoint_v1(
+                        base_text.clone(),
+                        base_text,
+                    )
+                })
             }
         }
     }
@@ -934,25 +958,48 @@ impl BodyConvergenceEngine for YrsConvergenceBodyEngine {
                 concurrent,
             };
         }
-        let current_checkpoint = FULL_TEXT_BODY_MODEL
+        let yrs_candidate = FULL_TEXT_BODY_MODEL
             .yrs_checkpoint_from_state(current_state)
-            .expect("current canonical state should decode into a yrs checkpoint");
-        let base_checkpoint = YrsTextCheckpoint::from_materialized_text(base_text)
-            .expect("base text should convert into a yrs checkpoint");
-        let incoming_updates = base_checkpoint
-            .update_to_text_v1(
-                incoming_text,
-                yrs_operation_client_id(actor_id, base_text, incoming_text),
-            )
-            .expect("incoming text should produce yrs incremental updates");
-        let canonical_checkpoint = current_checkpoint
-            .with_update_sequence_v1(&incoming_updates)
-            .expect("yrs updates should merge into current canonical state");
-        let candidate_state = FULL_TEXT_BODY_MODEL
-            .state_from_yrs_checkpoint(canonical_checkpoint)
-            .expect("merged yrs checkpoint should materialize as canonical text state");
-        let candidate_text = candidate_state.materialized_text();
-        if !candidate_text.contains(current_text) || !candidate_text.contains(incoming_text) {
+            .and_then(|current_checkpoint| {
+                YrsTextCheckpoint::from_materialized_text(base_text).and_then(|base_checkpoint| {
+                    base_checkpoint
+                        .update_to_text_v1(
+                            incoming_text,
+                            yrs_operation_client_id(actor_id, base_text, incoming_text),
+                        )
+                        .and_then(|incoming_updates| {
+                            current_checkpoint
+                                .with_update_sequence_v1(&incoming_updates)
+                                .and_then(|canonical_checkpoint| {
+                                    FULL_TEXT_BODY_MODEL
+                                        .state_from_yrs_checkpoint(canonical_checkpoint)
+                                        .map(|candidate_state| (incoming_updates, candidate_state))
+                                })
+                        })
+                })
+            });
+        if let Ok((incoming_updates, candidate_state)) = yrs_candidate {
+            let candidate_text = candidate_state.materialized_text();
+            if candidate_text.contains(current_text) && candidate_text.contains(incoming_text) {
+                return BodyConvergenceResult {
+                    retained_history: RetainedBodyHistoryPayload::yrs_text_update_v1(
+                        base_text,
+                        &incoming_updates,
+                        candidate_text,
+                    )
+                    .unwrap_or_else(|_| {
+                        FULL_TEXT_BODY_MODEL.history_from_stored_revision(
+                            base_text,
+                            candidate_text,
+                            false,
+                        )
+                    }),
+                    canonical_state: candidate_state,
+                    concurrent,
+                };
+            }
+        }
+        {
             let fallback_text =
                 deterministic_concurrent_text_union(base_text, current_text, incoming_text);
             let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(&fallback_text);
@@ -962,15 +1009,6 @@ impl BodyConvergenceEngine for YrsConvergenceBodyEngine {
                 canonical_state,
                 concurrent,
             };
-        }
-        BodyConvergenceResult {
-            retained_history: RetainedBodyHistoryPayload::yrs_text_update_v1(
-                base_text,
-                &incoming_updates,
-                candidate_text,
-            ),
-            canonical_state: candidate_state,
-            concurrent,
         }
     }
 }
