@@ -17,6 +17,8 @@ mod history_postgres;
 mod history_restore;
 mod history_surgery;
 mod manifest;
+mod manifest_file;
+mod manifest_postgres;
 mod postgres_store;
 mod provenance;
 mod sqlite;
