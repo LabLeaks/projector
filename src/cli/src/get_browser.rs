@@ -9,10 +9,6 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
 use projector_domain::SyncEntrySummary;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -20,6 +16,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
+
+use crate::browser_ui::TerminalUiGuard;
 
 #[derive(Clone, Debug)]
 pub(crate) enum GetBrowserExit {
@@ -53,9 +51,9 @@ impl GetBrowser {
 
     fn run(&mut self) -> Result<GetBrowserExit, Box<dyn Error>> {
         let mut stdout = io::stdout();
-        enable_raw_mode()?;
-        execute!(stdout, EnterAlternateScreen)?;
-        let _guard = GetTerminalGuard;
+        let mut guard = TerminalUiGuard::new();
+        guard.enable_raw_mode()?;
+        guard.enter_alternate_screen(&mut stdout)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -174,16 +172,6 @@ impl GetBrowser {
         if self.selected_idx + 1 < self.entries.len() {
             self.selected_idx += 1;
         }
-    }
-}
-
-struct GetTerminalGuard;
-
-impl Drop for GetTerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
     }
 }
 

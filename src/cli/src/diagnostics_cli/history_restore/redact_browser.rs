@@ -9,10 +9,6 @@ use std::path::Path;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
 use projector_domain::DocumentBodyRedactionMatch;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -21,7 +17,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::browser_ui::{centered_rect, format_unix_timestamp};
+use crate::browser_ui::{TerminalUiGuard, centered_rect, format_unix_timestamp};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RedactBrowserExit {
@@ -76,9 +72,9 @@ impl<'a> RedactBrowser<'a> {
 
     fn run(&mut self) -> Result<RedactBrowserExit, Box<dyn Error>> {
         let mut stdout = io::stdout();
-        enable_raw_mode()?;
-        execute!(stdout, EnterAlternateScreen)?;
-        let _guard = RedactTerminalGuard;
+        let mut guard = TerminalUiGuard::new();
+        guard.enable_raw_mode()?;
+        guard.enter_alternate_screen(&mut stdout)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -274,15 +270,6 @@ impl<'a> RedactBrowser<'a> {
 
     fn selected_match(&self) -> &DocumentBodyRedactionMatch {
         &self.matches[self.selected_idx]
-    }
-}
-
-struct RedactTerminalGuard;
-
-impl Drop for RedactTerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
     }
 }
 

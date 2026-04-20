@@ -10,10 +10,6 @@ use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
 use projector_domain::DocumentBodyRevision;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -22,7 +18,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::browser_ui::centered_rect;
+use crate::browser_ui::{TerminalUiGuard, centered_rect};
 
 #[derive(Clone, Debug)]
 pub(crate) struct RestoreSelection {
@@ -140,9 +136,9 @@ impl<'a> RestoreBrowser<'a> {
 
     fn run(&mut self) -> Result<RestoreBrowserExit, Box<dyn Error>> {
         let mut stdout = io::stdout();
-        enable_raw_mode()?;
-        execute!(stdout, EnterAlternateScreen)?;
-        let _guard = RestoreTerminalGuard;
+        let mut guard = TerminalUiGuard::new();
+        guard.enable_raw_mode()?;
+        guard.enter_alternate_screen(&mut stdout)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -362,15 +358,6 @@ impl RestoreBrowser<'_> {
         } else {
             None
         }
-    }
-}
-
-struct RestoreTerminalGuard;
-
-impl Drop for RestoreTerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
     }
 }
 

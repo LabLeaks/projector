@@ -78,11 +78,15 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    let expected_match_seqs = matching_revisions
+        .iter()
+        .map(|revision| revision.seq)
+        .collect::<Vec<_>>();
     prepared.transport.redact_document_body_history(
         &prepared.binding,
         &prepared.document_id,
         &redact_args.exact_text,
-        None,
+        Some(&expected_match_seqs),
     )?;
     println!("redaction: applied");
     Ok(())
