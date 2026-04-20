@@ -422,6 +422,7 @@ And within that SQLite backend, the code should stay split by responsibility rat
 - `PROJECTOR.SERVER.SQLITE_DOCUMENT_RESTORE_APPLY`: restored body mutation plus append-only path/body/provenance writes
 - `PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE`: workspace rewind seam
 - `PROJECTOR.SERVER.SQLITE_WORKSPACE_RECONSTRUCTION`: historical workspace snapshot reconstruction
+- `PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE_MERGE`: merge of current live workspace state with reconstructed historical target state
 - `PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE_PLAN`: restore planning seam
 - `PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE_DIFF`: current-vs-restored snapshot traversal into per-document restore changes
 - `PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE_METADATA`: restore metadata seam only

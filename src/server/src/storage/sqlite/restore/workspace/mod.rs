@@ -4,6 +4,7 @@ Coordinates SQLite workspace reconstruction and rewind by delegating snapshot re
 */
 // @fileimplements PROJECTOR.SERVER.SQLITE_WORKSPACE_RESTORE
 mod apply;
+mod merge;
 mod plan;
 mod reconstruct;
 

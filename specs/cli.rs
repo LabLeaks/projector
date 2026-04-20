@@ -57,7 +57,7 @@ When `projector purge <repo-relative-path>` runs in an interactive terminal with
 When `projector purge <repo-relative-path>` runs in an interactive terminal without `--confirm`, projector opens a terminal browser over the retained revisions whose body content would be cleared before applying.
 
 @spec PROJECTOR.CLI.COMPACT.SETS_PATH_POLICY
-`projector compact <repo-relative-path> --revisions <count> --frequency <count>` sets a retained-history compaction policy override for that file or folder path instead of compacting history immediately.
+`projector compact <repo-relative-path> --revisions <count> --frequency <count>` sets a retained-history compaction policy override for that synced path instead of compacting history immediately.
 
 @spec PROJECTOR.CLI.COMPACT.REPORTS_EFFECTIVE_POLICY
 `projector compact <repo-relative-path>` without mutation flags reports the effective retained-history compaction policy for that path together with whether it comes from a file override, an ancestor-folder override, or the inherited default.

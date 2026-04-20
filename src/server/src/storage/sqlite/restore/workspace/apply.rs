@@ -13,8 +13,9 @@ use crate::storage::sqlite::state::{
 };
 use crate::storage::{StoreError, history::FilePathRevision};
 
+use super::merge::build_restored_live_workspace_snapshot;
 use super::plan::diff::diff_workspace_restore_changes;
-use super::reconstruct::{build_restored_live_workspace_snapshot, reconstruct_workspace_at_cursor};
+use super::reconstruct::reconstruct_workspace_at_cursor;
 
 pub(super) fn restore_workspace_at_cursor_tx(
     transaction: &rusqlite::Transaction<'_>,
