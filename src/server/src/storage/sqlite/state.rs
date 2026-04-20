@@ -4,6 +4,7 @@ Owns the SQLite schema, workspace row persistence, append-only row writes, and s
 */
 // @fileimplements PROJECTOR.SERVER.SQLITE_STATE
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::{
@@ -13,6 +14,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use super::super::StoreError;
+
+static SQLITE_FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub(super) const SQLITE_SCHEMA: &str = r#"
 create table if not exists workspaces (
@@ -212,16 +215,17 @@ pub(super) fn decode_json<T: for<'de> Deserialize<'de>>(value: &str) -> Result<T
 }
 
 pub(super) fn make_document_id() -> String {
+    let counter = SQLITE_FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_nanos();
-    format!("doc-{nanos}")
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(counter as u128);
+    format!("doc-{nanos}-{counter}")
 }
 
 pub(super) fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_millis()
+        .map(|duration| duration.as_millis())
+        .unwrap_or_else(|_| SQLITE_FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed) as u128)
 }

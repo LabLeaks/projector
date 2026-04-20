@@ -3,6 +3,7 @@
 Owns shared workspace-provenance helpers and event-kind encoding while delegating file-backed, Postgres-backed, and synthetic provenance adapters to narrower modules.
 */
 // @fileimplements PROJECTOR.SERVER.PROVENANCE
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::ProvenanceEventKind;
@@ -12,6 +13,8 @@ use super::StoreError;
 pub(crate) use super::provenance_file::*;
 pub(crate) use super::provenance_postgres::*;
 pub(crate) use super::provenance_synthetic::*;
+
+static PROVENANCE_FALLBACK_CLOCK: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn parse_event_kind(raw: &str) -> Result<ProvenanceEventKind, StoreError> {
     match raw {
@@ -47,6 +50,6 @@ pub(crate) fn event_kind_db_value(kind: &ProvenanceEventKind) -> &'static str {
 pub(crate) fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_millis()
+        .map(|duration| duration.as_millis())
+        .unwrap_or_else(|_| PROVENANCE_FALLBACK_CLOCK.fetch_add(1, Ordering::Relaxed) as u128)
 }

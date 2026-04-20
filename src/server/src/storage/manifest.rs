@@ -4,6 +4,7 @@ Owns shared document path lifecycle helpers and stale-cursor checks while delega
 */
 // @fileimplements PROJECTOR.SERVER.MANIFEST
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::StoreError;
@@ -11,6 +12,8 @@ use super::provenance::current_workspace_cursor_tx;
 
 pub(crate) use super::manifest_file::*;
 pub(crate) use super::manifest_postgres::*;
+
+static MANIFEST_FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn display_document_path(mount_path: &str, relative_path: &str) -> String {
     if relative_path.is_empty() {
@@ -61,16 +64,17 @@ pub(crate) async fn enforce_manifest_cursor_tx(
 }
 
 pub(crate) fn make_document_id() -> String {
+    let counter = MANIFEST_FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_nanos();
-    format!("doc-{nanos}")
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(counter as u128);
+    format!("doc-{nanos}-{counter}")
 }
 
 pub(crate) fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_millis()
+        .map(|duration| duration.as_millis())
+        .unwrap_or_else(|_| MANIFEST_FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed) as u128)
 }

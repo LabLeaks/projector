@@ -6,6 +6,7 @@ Owns document body update and restore mutation flows above the body-state, body-
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::{
@@ -25,6 +26,8 @@ use super::history::file_read_body_revisions;
 use super::history_compaction::replay_body_revision_run;
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;
+
+static BODY_MUTATION_FALLBACK_CLOCK: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn file_persist_workspace_snapshot(
     state_dir: &Path,
@@ -541,8 +544,8 @@ pub(crate) fn snapshot_subset_for_documents(
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_millis()
+        .map(|duration| duration.as_millis())
+        .unwrap_or_else(|_| BODY_MUTATION_FALLBACK_CLOCK.fetch_add(1, Ordering::Relaxed) as u128)
 }
 
 pub(crate) struct MergeTextUpdate(super::body_state::BodyConvergenceResult);
