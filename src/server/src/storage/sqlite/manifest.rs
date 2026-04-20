@@ -121,7 +121,7 @@ pub(super) fn update_document_tx(
     };
 
     let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
-    let current_state = body_persistence.load_current_state(&state.snapshot, &document_id);
+    let current_state = body_persistence.load_current_state(&state.snapshot, &document_id)?;
     let merge = YrsConvergenceBodyEngine.apply_update(
         &request.actor_id,
         &request.base_text,

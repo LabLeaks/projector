@@ -75,7 +75,7 @@ pub(crate) fn file_update_document(
     }
 
     let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
-    let current_state = body_persistence.load_current_state(&snapshot, &document_id);
+    let current_state = body_persistence.load_current_state(&snapshot, &document_id)?;
     let merge = merge_text_update(
         &request.actor_id,
         &request.base_text,
@@ -183,7 +183,7 @@ pub(crate) fn file_restore_document_body_revision(
         })?;
     let fallback_target_state = target_revision.materialized_body_state();
     let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
-    let current_state = body_persistence.load_current_state(&snapshot, &document_id);
+    let current_state = body_persistence.load_current_state(&snapshot, &document_id)?;
 
     snapshot.manifest.entries[entry_index].deleted = false;
     snapshot.manifest.entries[entry_index].mount_relative_path = target_mount_relative_path.clone();

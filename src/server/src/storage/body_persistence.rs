@@ -32,9 +32,9 @@ pub(crate) trait SnapshotBodyPersistence {
         &self,
         snapshot: &BootstrapSnapshot,
         document_id: &DocumentId,
-    ) -> CanonicalBodyState {
-        body_state_from_snapshot(snapshot, document_id)
-            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
+    ) -> Result<CanonicalBodyState, StoreError> {
+        Ok(body_state_from_snapshot(snapshot, document_id)
+            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state()))
     }
 
     fn write_current_state(
@@ -100,25 +100,20 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
         &self,
         snapshot: &BootstrapSnapshot,
         document_id: &DocumentId,
-    ) -> CanonicalBodyState {
-        self.read_current_states()
-            .ok()
-            .and_then(|states| {
-                states
-                    .into_iter()
-                    .find(|state| state.document_id == document_id.as_str())
-                    .and_then(|stored| {
-                        CanonicalBodyStateKind::parse(&stored.state_kind)
-                            .ok()
-                            .and_then(|kind| {
-                                FULL_TEXT_BODY_MODEL
-                                    .state_from_storage_record(kind, stored.storage_payload)
-                                    .ok()
-                            })
-                    })
-            })
-            .or_else(|| body_state_from_snapshot(snapshot, document_id))
-            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
+    ) -> Result<CanonicalBodyState, StoreError> {
+        let Some(stored) = self
+            .read_current_states()?
+            .into_iter()
+            .find(|state| state.document_id == document_id.as_str())
+        else {
+            return Ok(body_state_from_snapshot(snapshot, document_id)
+                .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state()));
+        };
+
+        let kind = CanonicalBodyStateKind::parse(&stored.state_kind).map_err(StoreError::new)?;
+        FULL_TEXT_BODY_MODEL
+            .state_from_storage_record(kind, stored.storage_payload)
+            .map_err(StoreError::new)
     }
 
     fn write_current_state(
@@ -214,6 +209,51 @@ mod tests {
             .expect_err("corrupt canonical state should not be silently ignored");
         assert!(err.to_string().contains("expected"));
     }
+
+    #[test]
+    fn file_load_current_state_fails_on_corrupt_existing_state_file() {
+        let state_dir = temp_state_dir("corrupt-canonical-load");
+        let persistence = FileBodyPersistence::new(&state_dir, "workspace-1");
+        let workspace_root = crate::storage::workspaces::workspace_dir(&state_dir, "workspace-1");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        std::fs::write(workspace_root.join("canonical_bodies.json"), b"{not-json")
+            .expect("write corrupt canonical state file");
+
+        let err = persistence
+            .load_current_state(&BootstrapSnapshot::default(), &DocumentId::new("doc-1"))
+            .expect_err("corrupt canonical state should not be silently ignored");
+        assert!(err.to_string().contains("expected"));
+    }
+
+    #[test]
+    fn sqlite_load_current_state_fails_on_invalid_canonical_state_kind() {
+        let mut connection = rusqlite::Connection::open_in_memory().expect("open sqlite");
+        connection
+            .execute_batch(
+                "create table canonical_bodies (
+                    workspace_id text not null,
+                    document_id text not null,
+                    state_kind text not null,
+                    storage_payload text not null,
+                    primary key (workspace_id, document_id)
+                );",
+            )
+            .expect("create canonical bodies table");
+        connection
+            .execute(
+                "insert into canonical_bodies (workspace_id, document_id, state_kind, storage_payload)
+                 values (?1, ?2, ?3, ?4)",
+                rusqlite::params!["workspace-1", "doc-1", "bogus_kind", ""],
+            )
+            .expect("insert invalid canonical body row");
+        let transaction = connection.transaction().expect("begin transaction");
+        let persistence = SqliteBodyPersistence::new(&transaction, "workspace-1");
+
+        let err = persistence
+            .load_current_state(&BootstrapSnapshot::default(), &DocumentId::new("doc-1"))
+            .expect_err("invalid canonical body kind should fail");
+        assert!(err.to_string().contains("unknown canonical body state kind"));
+    }
 }
 
 pub(crate) struct SqliteBodyPersistence<'a> {
@@ -235,21 +275,31 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
         &self,
         snapshot: &BootstrapSnapshot,
         document_id: &DocumentId,
-    ) -> CanonicalBodyState {
-        self.transaction
+    ) -> Result<CanonicalBodyState, StoreError> {
+        let row = self.transaction
             .query_row(
                 "select state_kind, storage_payload from canonical_bodies where workspace_id = ?1 and document_id = ?2",
                 rusqlite::params![self.workspace_id, document_id.as_str()],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
-            .ok()
-            .and_then(|(kind, storage_payload)| {
-                CanonicalBodyStateKind::parse(&kind)
-                    .ok()
-                    .and_then(|kind| FULL_TEXT_BODY_MODEL.state_from_storage_record(kind, storage_payload).ok())
-            })
-            .or_else(|| body_state_from_snapshot(snapshot, document_id))
-            .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state())
+            .map(Some)
+            .or_else(|err| {
+                if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+                    Ok(None)
+                } else {
+                    Err(StoreError::from(err))
+                }
+            })?;
+
+        let Some((kind, storage_payload)) = row else {
+            return Ok(body_state_from_snapshot(snapshot, document_id)
+                .unwrap_or_else(|| FULL_TEXT_BODY_MODEL.empty_state()));
+        };
+
+        let kind = CanonicalBodyStateKind::parse(&kind).map_err(StoreError::new)?;
+        FULL_TEXT_BODY_MODEL
+            .state_from_storage_record(kind, storage_payload)
+            .map_err(StoreError::new)
     }
 
     fn write_current_state(

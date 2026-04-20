@@ -222,7 +222,12 @@ fn release_review_full_scan_stays_on_code_surface() {
     assert!(
         changed_files
             .iter()
-            .all(|value| !matches!(value.as_str(), Some("README.md" | "PRODUCT.md" | "ARCHITECTURE.md")))
+            .all(|value| {
+                !value
+                    .as_str()
+                    .expect("file path")
+                    .ends_with(".md")
+            })
     );
 }
 
