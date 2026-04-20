@@ -28,6 +28,7 @@ REQUIRED_PREVIEW_CHUNK_KEYS = {
     "chunk_index",
     "chunk_count",
     "files",
+    "diff",
     "estimated_chars",
     "file_contexts",
     "prompt",
@@ -230,6 +231,8 @@ def validate_review_preview(payload: dict, *, subject: str) -> dict:
                 isinstance(item, str) for item in chunk["files"]
             ):
                 raise SystemExit(f"{subject} review chunk `files` must be a string array")
+            if not isinstance(chunk["diff"], str):
+                raise SystemExit(f"{subject} review chunk `diff` must be a string")
             if not isinstance(chunk["estimated_chars"], int):
                 raise SystemExit(
                     f"{subject} review chunk `estimated_chars` must be an integer"

@@ -286,6 +286,25 @@ fn release_review_splits_oversized_context_into_multiple_chunks() {
 }
 
 #[test]
+fn release_review_preview_chunks_include_diff_payload() {
+    let payload = release_review_dry_run(&["--full"]);
+    for review_pass in payload["review_passes"]
+        .as_array()
+        .expect("review_passes should be an array")
+    {
+        for chunk in review_pass["chunks"]
+            .as_array()
+            .expect("chunks should be an array")
+        {
+            assert!(
+                chunk["diff"].is_string(),
+                "review chunk should carry a diff string: {chunk:?}"
+            );
+        }
+    }
+}
+
+#[test]
 // @verifies PROJECTOR.QUALITY.RELEASE_REVIEW.SKIPPED_CHUNK_WARNINGS
 fn release_review_reports_runner_warning_for_unsendable_chunk() {
     let payload = release_review_chunk_helper(140_000);

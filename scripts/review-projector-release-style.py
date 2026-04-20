@@ -207,6 +207,7 @@ def main() -> int:
                                 "chunk_index": chunk["chunk_index"],
                                 "chunk_count": chunk["chunk_count"],
                                 "files": chunk["files"],
+                                "diff": chunk["diff"],
                                 "estimated_chars": chunk["estimated_chars"],
                                 "file_contexts": chunk["file_contexts"],
                                 "prompt": chunk["prompt"],

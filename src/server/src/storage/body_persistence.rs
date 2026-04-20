@@ -128,7 +128,7 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
         state: &CanonicalBodyState,
     ) -> Result<(), StoreError> {
         upsert_body_state(snapshot, document_id, state);
-        let mut states = self.read_current_states().unwrap_or_default();
+        let mut states = self.read_current_states()?;
         if let Some(existing) = states
             .iter_mut()
             .find(|existing| existing.document_id == document_id.as_str())
@@ -176,6 +176,43 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
             ),
         )?;
         file_enforce_history_compaction_policy(self.state_dir, self.workspace_id, document_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_state_dir(name: &str) -> std::path::PathBuf {
+        let unique = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(format!("projector-body-persistence-{name}-{unique}"));
+        std::fs::create_dir_all(&root).expect("create temp state dir");
+        root
+    }
+
+    #[test]
+    fn file_write_current_state_fails_on_corrupt_existing_state_file() {
+        let state_dir = temp_state_dir("corrupt-canonical-state");
+        let persistence = FileBodyPersistence::new(&state_dir, "workspace-1");
+        let workspace_root = crate::storage::workspaces::workspace_dir(&state_dir, "workspace-1");
+        std::fs::create_dir_all(&workspace_root).expect("create workspace root");
+        std::fs::write(workspace_root.join("canonical_bodies.json"), b"{not-json")
+            .expect("write corrupt canonical state file");
+
+        let mut snapshot = BootstrapSnapshot::default();
+        let document_id = DocumentId::new("doc-1");
+        let state = FULL_TEXT_BODY_MODEL.state_from_materialized_text("hello\n");
+        let err = persistence
+            .write_current_state(&mut snapshot, &document_id, &state)
+            .expect_err("corrupt canonical state should not be silently ignored");
+        assert!(err.to_string().contains("expected"));
     }
 }
 
