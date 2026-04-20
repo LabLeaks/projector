@@ -15,6 +15,7 @@ SMART_MODEL = "gpt-5.4"
 PERMISSIONS_PROFILE = "release_review"
 MOCK_ALLOW_ENV = "PROJECTOR_RELEASE_REVIEW_ALLOW_MOCK"
 MOCK_OUTPUT_ENV = "PROJECTOR_RELEASE_REVIEW_MOCK_OUTPUT"
+CODEX_TIMEOUT_SECONDS = 20 * 60
 
 
 class CodexInvocationError(RuntimeError):
@@ -88,13 +89,19 @@ def invoke_codex(
         except (json.JSONDecodeError, SystemExit, TypeError, AttributeError) as err:
             raise CodexInvocationError(f"mocked review output was invalid: {err}") from err
 
-    result = subprocess.run(
-        codex_exec_command(model, schema_path),
-        cwd=root,
-        input=prompt,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            codex_exec_command(model, schema_path),
+            cwd=root,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=CODEX_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as err:
+        raise CodexInvocationError(
+            f"codex review timed out after {CODEX_TIMEOUT_SECONDS} seconds"
+        ) from err
     if result.returncode != 0:
         stderr = result.stderr.strip()
         lower = stderr.lower()

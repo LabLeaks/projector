@@ -76,10 +76,11 @@ use serde_json::json;
 use std::{fs, process::Command};
 
 use support::{
-    latest_reachable_semver_tag, python_entrypoint_runtime_flag, release_review_changed_line_ranges,
-    release_review_chunk_helper, release_review_dry_run, release_review_extract_context_ranges,
-    release_review_extract_full_scan_context_ranges, release_review_merge_responses,
-    release_review_passes_for, release_review_schema, release_review_validate_response_shape_err,
+    latest_reachable_semver_tag, python_entrypoint_runtime_flag,
+    release_review_changed_line_ranges, release_review_chunk_helper, release_review_dry_run,
+    release_review_extract_context_ranges, release_review_extract_full_scan_context_ranges,
+    release_review_merge_responses, release_review_passes_for, release_review_schema,
+    release_review_validate_response_shape_err,
     release_review_validate_response_shape_nonjson_value_err,
     release_review_validate_response_shape_ok, repo_root, workflow_files,
 };
@@ -222,12 +223,7 @@ fn release_review_full_scan_stays_on_code_surface() {
     assert!(
         changed_files
             .iter()
-            .all(|value| {
-                !value
-                    .as_str()
-                    .expect("file path")
-                    .ends_with(".md")
-            })
+            .all(|value| { !value.as_str().expect("file path").ends_with(".md") })
     );
 }
 
@@ -305,8 +301,14 @@ fn release_review_chunks_stay_within_budget() {
 // @verifies PROJECTOR.QUALITY.RELEASE_REVIEW.CHUNKED_CONTEXT
 fn release_review_splits_oversized_context_into_multiple_chunks() {
     let payload = release_review_chunk_helper(80_000);
-    let chunks = payload["chunks"].as_array().expect("chunks should be an array");
-    assert!(chunks.len() >= 2, "expected multiple chunks, got {}", chunks.len());
+    let chunks = payload["chunks"]
+        .as_array()
+        .expect("chunks should be an array");
+    assert!(
+        chunks.len() >= 2,
+        "expected multiple chunks, got {}",
+        chunks.len()
+    );
 }
 
 #[test]
@@ -392,7 +394,14 @@ fn release_review_merge_output_is_stable_across_response_order() {
     ]);
 
     let first = release_review_merge_responses(&responses);
-    let reversed = json!(responses.as_array().expect("array").iter().rev().collect::<Vec<_>>());
+    let reversed = json!(
+        responses
+            .as_array()
+            .expect("array")
+            .iter()
+            .rev()
+            .collect::<Vec<_>>()
+    );
     let second = release_review_merge_responses(&reversed);
     assert_eq!(first, second);
 }
@@ -470,7 +479,9 @@ fn release_review_exits_successfully_when_codex_returns_warnings() {
         "summary:\n{}",
         payload["summary"]
     );
-    let warnings = payload["warnings"].as_array().expect("warnings should be array");
+    let warnings = payload["warnings"]
+        .as_array()
+        .expect("warnings should be array");
     assert_eq!(warnings.len(), 1);
     assert_eq!(warnings[0]["category"], "maintainability");
     assert_eq!(warnings[0]["severity"], "warn");

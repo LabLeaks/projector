@@ -36,8 +36,7 @@ pub(crate) async fn postgres_list_sync_entries(
         let remote_path = row.get::<_, String>("mount_path");
         let snapshot =
             postgres_reconstruct_workspace_at_cursor(client, &workspace_id, i64::MAX as u64)
-                .await
-                .unwrap_or_default();
+                .await?;
         let kind = row
             .get::<_, Option<String>>("entry_kind")
             .as_deref()

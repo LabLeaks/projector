@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 /**
 @module PROJECTOR.TESTS.RELEASE_PIPELINE
 Local release workflow and distribution proof tests for projector.
@@ -7,7 +8,6 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
-use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -257,7 +257,12 @@ fn asset_name_set(values: &Value) -> BTreeSet<String> {
         .as_array()
         .expect("asset values should be an array")
         .iter()
-        .map(|value| value.as_str().expect("asset name should be string").to_owned())
+        .map(|value| {
+            value
+                .as_str()
+                .expect("asset name should be string")
+                .to_owned()
+        })
         .collect()
 }
 
@@ -405,7 +410,13 @@ fn release_tag_dry_run_lists_checklist_and_publication_commands() {
         .collect();
     assert_eq!(
         checklist_ids,
-        vec!["readme", "changelog", "version", "validation", "release_review"]
+        vec![
+            "readme",
+            "changelog",
+            "version",
+            "validation",
+            "release_review"
+        ]
     );
     assert_eq!(
         payload["push_main_command"]
@@ -664,11 +675,24 @@ fn github_release_verifier_rejects_missing_or_unexpected_assets() {
         &release.to_string(),
         None,
     );
-    assert!(!output.status.success(), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("release assets did not match expected set"), "stderr:\n{stderr}");
-    assert!(stderr.contains("projector-server-x86_64-unknown-linux-gnu.tar.xz"), "stderr:\n{stderr}");
-    assert!(stderr.contains("unexpected-extra.tar.xz"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("release assets did not match expected set"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("projector-server-x86_64-unknown-linux-gnu.tar.xz"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("unexpected-extra.tar.xz"),
+        "stderr:\n{stderr}"
+    );
 }
 
 #[test]
@@ -693,7 +717,11 @@ fn github_release_verifier_rejects_missing_digest_and_wrong_tag() {
         &release.to_string(),
         None,
     );
-    assert!(!output.status.success(), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("release tag mismatch"), "stderr:\n{stderr}");
 }
@@ -737,11 +765,16 @@ fn homebrew_formula_verifier_rejects_wrong_formula_selector_entry() {
         .to_string(),
         Some(&invalid_formula),
     );
-    assert!(!output.status.success(), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("formula is missing archive selector entry")
-            || stderr.contains("formula checksum selector entry does not contain expected checksum"),
+            || stderr
+                .contains("formula checksum selector entry does not contain expected checksum"),
         "stderr:\n{stderr}"
     );
 }

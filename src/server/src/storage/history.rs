@@ -13,9 +13,7 @@ use super::body_state::{
     RetainedBodyHistoryPayload,
 };
 use super::history_surgery::build_redaction_preview_lines;
-use projector_domain::{
-    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentPathEventKind,
-};
+use projector_domain::{DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentPathEventKind};
 
 pub(crate) use super::history_file::*;
 pub(crate) use super::history_postgres::*;
@@ -164,9 +162,7 @@ pub(crate) struct FilePathRevision {
     pub timestamp_ms: u128,
 }
 
-pub(crate) fn parse_public_path_event_kind(
-    raw: &str,
-) -> Result<DocumentPathEventKind, StoreError> {
+pub(crate) fn parse_public_path_event_kind(raw: &str) -> Result<DocumentPathEventKind, StoreError> {
     DocumentPathEventKind::from_str(raw).map_err(StoreError::new)
 }
 

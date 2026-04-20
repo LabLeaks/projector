@@ -4,13 +4,17 @@ Repo-local command runners, PTY helpers, temporary environment setup, and server
 */
 // @fileimplements PROJECTOR.TESTS.SUPPORT.LOCAL_BOOTSTRAP_COMMAND_HARNESS
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_PATH_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_temp_path(prefix: &str, name: &str) -> PathBuf {
+    let unique = TEMP_PATH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{prefix}-{name}-{}-{unique}", std::process::id()))
+}
 
 pub(crate) fn temp_repo(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("projector-{name}-{unique}"));
+    let root = next_temp_path("projector", name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create temp repo root");
     let status = Command::new("git")
@@ -25,11 +29,7 @@ pub(crate) fn temp_repo(name: &str) -> PathBuf {
 }
 
 pub(crate) fn temp_projector_home(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time before unix epoch")
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!("projector-home-{name}-{unique}"));
+    let root = next_temp_path("projector-home", name);
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create temp projector home");
     root
@@ -191,10 +191,7 @@ pub(crate) fn run_projector_with_env(
     String::from_utf8(output.stdout).expect("utf8 stdout")
 }
 
-pub(crate) fn merged_test_envs(
-    repo_root: &Path,
-    envs: &[(&str, &str)],
-) -> Vec<(String, String)> {
+pub(crate) fn merged_test_envs(repo_root: &Path, envs: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut merged = vec![(
         "PROJECTOR_HOME".to_owned(),
         repo_root.join(".projector-test-home").display().to_string(),

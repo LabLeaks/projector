@@ -252,7 +252,10 @@ mod tests {
         let err = persistence
             .load_current_state(&BootstrapSnapshot::default(), &DocumentId::new("doc-1"))
             .expect_err("invalid canonical body kind should fail");
-        assert!(err.to_string().contains("unknown canonical body state kind"));
+        assert!(
+            err.to_string()
+                .contains("unknown canonical body state kind")
+        );
     }
 }
 

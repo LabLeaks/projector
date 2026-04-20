@@ -144,11 +144,22 @@ pub(super) fn parse_restore_args(args: &[String]) -> Result<RestoreArgs, Box<dyn
 pub(super) fn parse_redact_args(args: &[String]) -> Result<RedactArgs, Box<dyn Error>> {
     let mut confirm = false;
     let mut positionals = Vec::new();
+    let mut parse_flags = true;
     for arg in args {
-        match arg.as_str() {
-            "--confirm" => confirm = true,
-            other => positionals.push(other.to_owned()),
+        if parse_flags {
+            match arg.as_str() {
+                "--" => {
+                    parse_flags = false;
+                    continue;
+                }
+                "--confirm" => {
+                    confirm = true;
+                    continue;
+                }
+                _ => {}
+            }
         }
+        positionals.push(arg.to_owned());
     }
     let [exact_text, repo_relative_path] = positionals.as_slice() else {
         return Err("redact requires <exact-text> <repo-relative-path>".into());
@@ -166,16 +177,25 @@ pub(super) fn parse_redact_args(args: &[String]) -> Result<RedactArgs, Box<dyn E
 pub(super) fn parse_purge_args(args: &[String]) -> Result<PurgeArgs, Box<dyn Error>> {
     let mut confirm = false;
     let mut repo_relative_path = None;
+    let mut parse_flags = true;
     for arg in args {
-        match arg.as_str() {
-            "--confirm" => confirm = true,
-            other => {
-                if repo_relative_path.is_some() {
-                    return Err(format!("unexpected extra purge argument: {other}").into());
+        if parse_flags {
+            match arg.as_str() {
+                "--" => {
+                    parse_flags = false;
+                    continue;
                 }
-                repo_relative_path = Some(other.to_owned());
+                "--confirm" => {
+                    confirm = true;
+                    continue;
+                }
+                _ => {}
             }
         }
+        if repo_relative_path.is_some() {
+            return Err(format!("unexpected extra purge argument: {arg}").into());
+        }
+        repo_relative_path = Some(arg.to_owned());
     }
     Ok(PurgeArgs {
         repo_relative_path: repo_relative_path
@@ -217,5 +237,34 @@ pub(super) fn resolve_restore_seq(
     match restore_args.selector {
         Some(RestoreSelector::Seq(seq)) => Ok(seq),
         Some(RestoreSelector::Previous) | None => default_restore_seq(revisions, requested_path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_purge_args, parse_redact_args};
+
+    #[test]
+    fn redact_accepts_literal_confirm_after_double_dash() {
+        let args = vec![
+            "--".to_owned(),
+            "--confirm".to_owned(),
+            "private/notes/literal-confirm.txt".to_owned(),
+        ];
+        let parsed = parse_redact_args(&args).expect("parse redact args");
+        assert_eq!(parsed.exact_text, "--confirm");
+        assert_eq!(
+            parsed.repo_relative_path,
+            "private/notes/literal-confirm.txt"
+        );
+        assert!(!parsed.confirm);
+    }
+
+    #[test]
+    fn purge_accepts_literal_confirm_path_after_double_dash() {
+        let args = vec!["--".to_owned(), "--confirm".to_owned()];
+        let parsed = parse_purge_args(&args).expect("parse purge args");
+        assert_eq!(parsed.repo_relative_path, "--confirm");
+        assert!(!parsed.confirm);
     }
 }

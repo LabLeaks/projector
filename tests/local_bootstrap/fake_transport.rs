@@ -5,8 +5,7 @@ Fake transport implementations for local-bootstrap sync recovery and retry proof
 // @fileimplements PROJECTOR.TESTS.SUPPORT.LOCAL_BOOTSTRAP_FAKE_TRANSPORT
 use super::*;
 
-pub(crate) fn default_compaction_policy_response()
--> (
+pub(crate) fn default_compaction_policy_response() -> (
     HistoryCompactionPolicy,
     HistoryCompactionPolicySourceKind,
     Option<String>,

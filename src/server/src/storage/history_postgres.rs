@@ -126,7 +126,10 @@ pub(crate) async fn postgres_clear_history_compaction_policy(
         .execute(
             "delete from history_compaction_policies \
              where workspace_id = $1 and repo_relative_path = $2",
-            &[&request.workspace_id, &normalized_path.display().to_string()],
+            &[
+                &request.workspace_id,
+                &normalized_path.display().to_string(),
+            ],
         )
         .await?;
     Ok(removed > 0)
@@ -213,19 +216,12 @@ pub(crate) async fn postgres_preview_redact_document_body_history(
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
-    let matches = retained_redaction_matches(
+    retained_redaction_matches(
         revisions,
         &request.document_id,
         &request.exact_text,
         request.limit,
-    )?;
-    if matches.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history matching {:?} in workspace {}",
-            request.document_id, request.exact_text, request.workspace_id
-        )));
-    }
-    Ok(matches)
+    )
 }
 
 pub(crate) async fn postgres_preview_purge_document_body_history(
@@ -264,14 +260,11 @@ pub(crate) async fn postgres_preview_purge_document_body_history(
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
-    let matches = retained_purge_matches(revisions, &request.document_id, request.limit);
-    if matches.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history in workspace {}",
-            request.document_id, request.workspace_id
-        )));
-    }
-    Ok(matches)
+    Ok(retained_purge_matches(
+        revisions,
+        &request.document_id,
+        request.limit,
+    ))
 }
 
 pub(crate) async fn postgres_enforce_history_compaction_policy(
@@ -486,12 +479,27 @@ pub(crate) async fn postgres_redact_document_body_history(
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
 
-    let mut matched_seqs = Vec::new();
-    for revision in revisions {
-        let Some(redacted) = revision.redacted(&request.exact_text)? else {
-            continue;
-        };
-        matched_seqs.push(redacted.seq);
+    let redacted_revisions = revisions
+        .into_iter()
+        .filter_map(|revision| revision.redacted(&request.exact_text).transpose())
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    let matched_seqs = redacted_revisions
+        .iter()
+        .map(|revision| revision.seq)
+        .collect::<Vec<_>>();
+    if matched_seqs.is_empty() {
+        return Err(StoreError::new(format!(
+            "document {} has no retained body history matching {:?} in workspace {}",
+            request.document_id, request.exact_text, request.workspace_id
+        )));
+    }
+    ensure_expected_history_match_set(
+        &request.document_id,
+        request.expected_match_seqs.as_ref(),
+        &matched_seqs,
+        "redaction",
+    )?;
+    for redacted in &redacted_revisions {
         transaction
             .execute(
                 "update document_body_revisions \
@@ -508,18 +516,6 @@ pub(crate) async fn postgres_redact_document_body_history(
             )
             .await?;
     }
-    if matched_seqs.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history matching {:?} in workspace {}",
-            request.document_id, request.exact_text, request.workspace_id
-        )));
-    }
-    ensure_expected_history_match_set(
-        &request.document_id,
-        request.expected_match_seqs.as_ref(),
-        &matched_seqs,
-        "redaction",
-    )?;
     let live_path = transaction
         .query_opt(
             "select mount_path, relative_path from document_paths \

@@ -232,37 +232,23 @@ pub(crate) fn file_preview_redact_document_body_history(
     state_dir: &Path,
     request: &PreviewRedactDocumentBodyHistoryRequest,
 ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
-    let matches = retained_redaction_matches(
+    retained_redaction_matches(
         file_read_body_revisions(state_dir, &request.workspace_id)?,
         &request.document_id,
         &request.exact_text,
         request.limit,
-    )?;
-    if matches.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history matching {:?} in workspace {}",
-            request.document_id, request.exact_text, request.workspace_id
-        )));
-    }
-    Ok(matches)
+    )
 }
 
 pub(crate) fn file_preview_purge_document_body_history(
     state_dir: &Path,
     request: &PreviewPurgeDocumentBodyHistoryRequest,
 ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
-    let matches = retained_purge_matches(
+    Ok(retained_purge_matches(
         file_read_body_revisions(state_dir, &request.workspace_id)?,
         &request.document_id,
         request.limit,
-    );
-    if matches.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history in workspace {}",
-            request.document_id, request.workspace_id
-        )));
-    }
-    Ok(matches)
+    ))
 }
 
 pub(crate) fn file_purge_document_body_history(

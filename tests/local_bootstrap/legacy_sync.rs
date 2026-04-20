@@ -1,10 +1,10 @@
+use super::command_harness::merged_test_envs;
 /**
 @module PROJECTOR.TESTS.SUPPORT.LOCAL_BOOTSTRAP_LEGACY_SYNC
 Legacy `projector sync` compatibility harness used by local-bootstrap proofs while the newer explicit sync subcommands coexist.
 */
 // @fileimplements PROJECTOR.TESTS.SUPPORT.LOCAL_BOOTSTRAP_LEGACY_SYNC
 use super::*;
-use super::command_harness::merged_test_envs;
 
 #[derive(Clone, Debug)]
 struct LegacySyncArgs {

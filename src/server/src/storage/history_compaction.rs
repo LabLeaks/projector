@@ -7,8 +7,7 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use projector_domain::{
-    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy,
-    HistoryCompactionPolicySourceKind,
+    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy, HistoryCompactionPolicySourceKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,9 +59,7 @@ pub(crate) fn validate_history_compaction_policy(
 pub(crate) fn normalize_history_compaction_path(raw: &str) -> Result<PathBuf, StoreError> {
     let path = Path::new(raw);
     if path.as_os_str().is_empty() {
-        return Err(StoreError::new(
-            "history compaction path must not be empty",
-        ));
+        return Err(StoreError::new("history compaction path must not be empty"));
     }
     if path.is_absolute() {
         return Err(StoreError::new(
@@ -90,7 +87,9 @@ pub(crate) fn normalize_history_compaction_path(raw: &str) -> Result<PathBuf, St
                 }
             }
             Component::RootDir | Component::Prefix(_) => {
-                return Err(StoreError::new("history compaction path must be repo-relative"));
+                return Err(StoreError::new(
+                    "history compaction path must be repo-relative",
+                ));
             }
         }
     }

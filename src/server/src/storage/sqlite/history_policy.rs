@@ -41,17 +41,21 @@ fn read_history_compaction_policies(
     )?;
     let rows = stmt.query_map(params![workspace_id], |row| {
         let revisions = decode_nonzero_policy_component(row.get::<_, i64>(1)?, "revisions")
-            .map_err(|err| rusqlite::Error::FromSqlConversionFailure(
-                1,
-                rusqlite::types::Type::Integer,
-                Box::new(err),
-            ))?;
+            .map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    1,
+                    rusqlite::types::Type::Integer,
+                    Box::new(err),
+                )
+            })?;
         let frequency = decode_nonzero_policy_component(row.get::<_, i64>(2)?, "frequency")
-            .map_err(|err| rusqlite::Error::FromSqlConversionFailure(
-                2,
-                rusqlite::types::Type::Integer,
-                Box::new(err),
-            ))?;
+            .map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Integer,
+                    Box::new(err),
+                )
+            })?;
         Ok(StoredHistoryCompactionPolicyOverride {
             repo_relative_path: std::path::PathBuf::from(row.get::<_, String>(0)?),
             policy: HistoryCompactionPolicy {

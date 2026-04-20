@@ -85,6 +85,84 @@ fn history_redaction_records_non_secret_audit_trail() {
     history_content_redaction_rewrites_exact_text_by_path();
 }
 
+#[test]
+fn projector_redact_accepts_literal_confirm_text_after_double_dash() {
+    let repo = temp_repo("cli-redact-literal-confirm");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    let secret = "--confirm";
+    fs::write(
+        repo.join("private/briefs/cli-redact-literal-confirm.html"),
+        format!("<p>created {secret} revision</p>\n"),
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let preview = run_projector(
+        &repo,
+        &[
+            "redact",
+            "--",
+            secret,
+            "private/briefs/cli-redact-literal-confirm.html",
+        ],
+    );
+    assert!(preview.contains("matching_revisions: 1"));
+
+    let applied = run_projector(
+        &repo,
+        &[
+            "redact",
+            "--confirm",
+            "--",
+            secret,
+            "private/briefs/cli-redact-literal-confirm.html",
+        ],
+    );
+    assert!(applied.contains("redaction: applied"));
+
+    let history = run_projector(
+        &repo,
+        &["history", "private/briefs/cli-redact-literal-confirm.html"],
+    );
+    assert!(!history.contains(secret));
+    assert!(history.contains("[REDACTED]"));
+}
+
+#[test]
+fn projector_redact_reports_no_matching_history_cleanly() {
+    let repo = temp_repo("cli-redact-no-matches");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/cli-redact-no-matches.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let preview = run_projector(
+        &repo,
+        &[
+            "redact",
+            "SECRET-123",
+            "private/briefs/cli-redact-no-matches.html",
+        ],
+    );
+    assert!(preview.contains("matching_revisions: 0"));
+    assert!(preview.contains("redaction: no_matches"));
+}
+
 fn assert_projector_purge_clears_retained_history_and_records_audit() {
     let repo = temp_repo("cli-purge");
     fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
@@ -181,6 +259,41 @@ fn history_purge_clears_retained_history_by_path() {
 #[test]
 fn history_purge_records_non_secret_audit_trail() {
     assert_projector_purge_clears_retained_history_and_records_audit();
+}
+
+#[test]
+fn projector_purge_reports_empty_retained_history_cleanly() {
+    let repo = temp_repo("cli-purge-no-matches");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    fs::create_dir_all(repo.join("private/briefs")).expect("create local subdir");
+    fs::write(
+        repo.join("private/briefs/cli-purge-no-matches.html"),
+        "<p>created revision</p>\n",
+    )
+    .expect("write create");
+    run_projector(&repo, &["sync"]);
+
+    let applied = run_projector(
+        &repo,
+        &[
+            "purge",
+            "--confirm",
+            "private/briefs/cli-purge-no-matches.html",
+        ],
+    );
+    assert!(applied.contains("purge: applied"));
+
+    let preview = run_projector(
+        &repo,
+        &["purge", "private/briefs/cli-purge-no-matches.html"],
+    );
+    assert!(preview.contains("clearable_revisions: 0"));
+    assert!(preview.contains("purge: nothing_to_clear"));
 }
 
 // @verifies PROJECTOR.CLI.REDACT.INTERACTIVE_CONFIRMATION

@@ -291,16 +291,14 @@ fn server_rejects_zero_valued_compaction_policy() {
         .workspace_id
         .clone();
 
-    let response =
-        set_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private", 0, 1);
+    let response = set_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private", 0, 1);
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     let error = response
         .json::<ApiErrorResponse>()
         .expect("decode invalid revisions response");
     assert!(error.message.contains("revisions must be at least 1"));
 
-    let response =
-        set_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private", 1, 0);
+    let response = set_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private", 1, 0);
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     let error = response
         .json::<ApiErrorResponse>()
@@ -348,5 +346,8 @@ fn server_normalizes_compaction_policy_paths() {
         policy.source_kind,
         HistoryCompactionPolicySourceKind::PathOverride
     );
-    assert_eq!(policy.source_path.as_deref(), Some("private/notes/today.html"));
+    assert_eq!(
+        policy.source_path.as_deref(),
+        Some("private/notes/today.html")
+    );
 }

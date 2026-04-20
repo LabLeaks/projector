@@ -29,6 +29,15 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     )?;
     let matching_revision_count = matching_revisions.len();
 
+    if matching_revisions.is_empty() {
+        println!("path: {}", prepared.requested_path.display());
+        println!("document_id: {}", prepared.document_id.as_str());
+        println!("matching_revisions: 0");
+        println!("replacement: [REDACTED]");
+        println!("redaction: no_matches");
+        return Ok(());
+    }
+
     if is_interactive_terminal() && !redact_args.confirm {
         match browse_redaction_matches(
             &prepared.requested_path,
@@ -101,6 +110,14 @@ pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         20,
     )?;
     let clearable_revision_count = clearable_revisions.len();
+
+    if clearable_revisions.is_empty() {
+        println!("path: {}", prepared.requested_path.display());
+        println!("document_id: {}", prepared.document_id.as_str());
+        println!("clearable_revisions: 0");
+        println!("purge: nothing_to_clear");
+        return Ok(());
+    }
 
     if is_interactive_terminal() && !purge_args.confirm {
         match browse_purge_matches(&prepared.requested_path, &clearable_revisions)? {

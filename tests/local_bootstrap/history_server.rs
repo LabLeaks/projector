@@ -433,6 +433,18 @@ fn server_redaction_rejects_stale_previewed_match_set() {
     );
     assert!(failure.contains("retained redaction preview is stale"));
     assert!(failure.contains("expected seqs [1], found [1, 2]"));
+
+    let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
+    assert!(
+        revisions
+            .iter()
+            .any(|revision| revision.body_text.contains(secret))
+    );
+    assert!(
+        revisions
+            .iter()
+            .all(|revision| !revision.body_text.contains("[REDACTED]"))
+    );
 }
 
 // @verifies PROJECTOR.SERVER.HISTORY.PURGES_DOCUMENT_RETAINED_BODY_HISTORY
@@ -809,13 +821,22 @@ fn server_lists_document_path_revisions() {
 
     let revisions = list_path_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions.len(), 3);
-    assert_eq!(revisions[0].event_kind, DocumentPathEventKind::DocumentCreated);
+    assert_eq!(
+        revisions[0].event_kind,
+        DocumentPathEventKind::DocumentCreated
+    );
     assert_eq!(revisions[0].mount_path, "private");
     assert_eq!(revisions[0].relative_path, "briefs/path-history-list.html");
-    assert_eq!(revisions[1].event_kind, DocumentPathEventKind::DocumentMoved);
+    assert_eq!(
+        revisions[1].event_kind,
+        DocumentPathEventKind::DocumentMoved
+    );
     assert_eq!(revisions[1].mount_path, "notes");
     assert_eq!(revisions[1].relative_path, "archive/path-history-list.html");
-    assert_eq!(revisions[2].event_kind, DocumentPathEventKind::DocumentDeleted);
+    assert_eq!(
+        revisions[2].event_kind,
+        DocumentPathEventKind::DocumentDeleted
+    );
     assert!(revisions[2].deleted);
 }
 

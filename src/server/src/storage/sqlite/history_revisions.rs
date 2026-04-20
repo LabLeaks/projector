@@ -60,37 +60,23 @@ pub(crate) fn preview_redact_document_body_history(
     connection: &Connection,
     request: &PreviewRedactDocumentBodyHistoryRequest,
 ) -> Result<Vec<DocumentBodyRedactionMatch>, StoreError> {
-    let matches = retained_redaction_matches(
+    retained_redaction_matches(
         read_body_revisions(connection, &request.workspace_id)?,
         &request.document_id,
         &request.exact_text,
         request.limit,
-    )?;
-    if matches.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history matching {:?} in workspace {}",
-            request.document_id, request.exact_text, request.workspace_id
-        )));
-    }
-    Ok(matches)
+    )
 }
 
 pub(crate) fn preview_purge_document_body_history(
     connection: &Connection,
     request: &PreviewPurgeDocumentBodyHistoryRequest,
 ) -> Result<Vec<DocumentBodyPurgeMatch>, StoreError> {
-    let matches = retained_purge_matches(
+    Ok(retained_purge_matches(
         read_body_revisions(connection, &request.workspace_id)?,
         &request.document_id,
         request.limit,
-    );
-    if matches.is_empty() {
-        return Err(StoreError::new(format!(
-            "document {} has no retained body history in workspace {}",
-            request.document_id, request.workspace_id
-        )));
-    }
-    Ok(matches)
+    ))
 }
 
 pub(crate) fn list_path_revisions(

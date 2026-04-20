@@ -262,7 +262,7 @@ def main() -> int:
                     f"review chunk {chunk['name']}#{chunk['chunk_index']} failed: {error}"
                 )
                 continue
-            except BaseException as error:
+            except Exception as error:
                 runner_warnings.append(
                     f"review chunk {chunk['name']}#{chunk['chunk_index']} crashed: {error}"
                 )
