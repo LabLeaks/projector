@@ -95,8 +95,8 @@ pub(super) fn resolve_document_restore_target(
                 request.document_id, request.seq
             ))
         })?
-        .materialized_body_state();
-    let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())
+        .materialized_body_state()?;
+    let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())?
         .remove(request.document_id.as_str())
         .ok_or_else(|| {
             StoreError::new(format!(

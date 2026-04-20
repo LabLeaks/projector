@@ -39,6 +39,8 @@ pub(crate) fn run_redact(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     if is_interactive_terminal() && !redact_args.confirm {
+        println!("path: {}", prepared.requested_path.display());
+        println!("document_id: {}", prepared.document_id.as_str());
         match browse_redaction_matches(
             &prepared.requested_path,
             &redact_args.exact_text,
@@ -120,6 +122,8 @@ pub(crate) fn run_purge(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 
     if is_interactive_terminal() && !purge_args.confirm {
+        println!("path: {}", prepared.requested_path.display());
+        println!("document_id: {}", prepared.document_id.as_str());
         match browse_purge_matches(&prepared.requested_path, &clearable_revisions)? {
             PurgeBrowserExit::Apply { selected_seq } => {
                 println!("clearable_revisions: {clearable_revision_count}");

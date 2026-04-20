@@ -45,7 +45,7 @@ pub(crate) trait BodyStateModel {
         base_text: impl Into<String>,
         materialized_text: impl Into<String>,
         conflicted: bool,
-    ) -> RetainedBodyHistoryPayload;
+    ) -> Result<RetainedBodyHistoryPayload, String>;
     fn redact_history_payload(
         &self,
         payload: &RetainedBodyHistoryPayload,
@@ -670,45 +670,39 @@ impl BodyStateModel for FullTextBodyModel {
         base_text: impl Into<String>,
         materialized_text: impl Into<String>,
         conflicted: bool,
-    ) -> RetainedBodyHistoryPayload {
+    ) -> Result<RetainedBodyHistoryPayload, String> {
         match kind {
             RetainedBodyHistoryKind::FullTextRevisionV1 => {
-                RetainedBodyHistoryPayload::full_text_revision_v1(
+                Ok(RetainedBodyHistoryPayload::full_text_revision_v1(
                     base_text,
                     materialized_text,
                     conflicted,
-                )
+                ))
             }
-            RetainedBodyHistoryKind::FullTextCheckpointV1 => {
-                RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text)
-            }
+            RetainedBodyHistoryKind::FullTextCheckpointV1 => Ok(
+                RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, materialized_text),
+            ),
             RetainedBodyHistoryKind::YrsTextCheckpointV1 => {
                 let storage_payload = materialized_text.into();
                 if storage_payload.is_empty() {
-                    return RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, "");
+                    return Ok(RetainedBodyHistoryPayload::full_text_checkpoint_v1(
+                        base_text, "",
+                    ));
                 }
                 let base_text = base_text.into();
-                YrsTextCheckpoint::from_storage_payload(&storage_payload)
-                    .and_then(|checkpoint| {
-                        RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(
-                            base_text.clone(),
-                            checkpoint,
-                        )
-                    })
-                    .unwrap_or_else(|_| {
-                        RetainedBodyHistoryPayload::full_text_checkpoint_v1(
-                            base_text.clone(),
-                            base_text,
-                        )
-                    })
+                YrsTextCheckpoint::from_storage_payload(&storage_payload).and_then(|checkpoint| {
+                    RetainedBodyHistoryPayload::yrs_text_checkpoint_v1(base_text, checkpoint)
+                })
             }
             RetainedBodyHistoryKind::YrsTextUpdateV1 => {
                 let base_text = base_text.into();
                 let storage_payload = materialized_text.into();
                 if storage_payload.is_empty() {
-                    return RetainedBodyHistoryPayload::full_text_checkpoint_v1(base_text, "");
+                    return Ok(RetainedBodyHistoryPayload::full_text_checkpoint_v1(
+                        base_text, "",
+                    ));
                 }
-                let decoded = serde_json::from_str::<StoredYrsTextUpdateV1>(&storage_payload)
+                serde_json::from_str::<StoredYrsTextUpdateV1>(&storage_payload)
                     .map_err(|err| format!("parse stored yrs update payload: {err}"))
                     .and_then(|stored| stored.decode_updates_v1())
                     .and_then(|updates_v1| {
@@ -717,18 +711,12 @@ impl BodyStateModel for FullTextBodyModel {
                             .and_then(|checkpoint| checkpoint.materialized_text())
                             .and_then(|materialized_text| {
                                 RetainedBodyHistoryPayload::yrs_text_update_v1(
-                                    base_text.clone(),
+                                    base_text,
                                     &updates_v1,
                                     materialized_text,
                                 )
                             })
-                    });
-                decoded.unwrap_or_else(|_| {
-                    RetainedBodyHistoryPayload::full_text_checkpoint_v1(
-                        base_text.clone(),
-                        base_text,
-                    )
-                })
+                    })
             }
         }
     }
@@ -1191,12 +1179,14 @@ mod tests {
         assert_ne!(payload.storage_payload(), "after\n");
         assert!(!payload.conflicted());
 
-        let decoded = model.history_from_storage_record(
-            RetainedBodyHistoryKind::YrsTextCheckpointV1,
-            payload.base_text(),
-            payload.storage_payload(),
-            true,
-        );
+        let decoded = model
+            .history_from_storage_record(
+                RetainedBodyHistoryKind::YrsTextCheckpointV1,
+                payload.base_text(),
+                payload.storage_payload(),
+                true,
+            )
+            .expect("checkpoint history should decode");
         assert_eq!(decoded.kind(), RetainedBodyHistoryKind::YrsTextCheckpointV1);
         assert_eq!(decoded.base_text(), "before\n");
         assert_eq!(decoded.materialized_text(), "after\n");
@@ -1222,12 +1212,14 @@ mod tests {
         let model = FullTextBodyModel;
         let payload = model.history_from_stored_revision("before\n", "after\n", false);
 
-        let decoded = model.history_from_storage_record(
-            RetainedBodyHistoryKind::YrsTextUpdateV1,
-            payload.base_text(),
-            payload.storage_payload(),
-            false,
-        );
+        let decoded = model
+            .history_from_storage_record(
+                RetainedBodyHistoryKind::YrsTextUpdateV1,
+                payload.base_text(),
+                payload.storage_payload(),
+                false,
+            )
+            .expect("yrs update history should decode");
         assert_eq!(decoded.kind(), RetainedBodyHistoryKind::YrsTextUpdateV1);
         assert_eq!(decoded.base_text(), "before\n");
         assert_eq!(decoded.materialized_text(), "after\n");
@@ -1253,23 +1245,47 @@ mod tests {
     #[test]
     fn purged_yrs_history_payloads_decode_as_empty_retained_history() {
         let model = FullTextBodyModel;
-        let checkpoint = model.history_from_storage_record(
-            RetainedBodyHistoryKind::YrsTextCheckpointV1,
-            "",
-            "",
-            false,
-        );
+        let checkpoint = model
+            .history_from_storage_record(
+                RetainedBodyHistoryKind::YrsTextCheckpointV1,
+                "",
+                "",
+                false,
+            )
+            .expect("empty checkpoint payload should decode");
         assert_eq!(checkpoint.base_text(), "");
         assert_eq!(checkpoint.materialized_text(), "");
 
-        let update = model.history_from_storage_record(
-            RetainedBodyHistoryKind::YrsTextUpdateV1,
-            "",
-            "",
-            false,
-        );
+        let update = model
+            .history_from_storage_record(RetainedBodyHistoryKind::YrsTextUpdateV1, "", "", false)
+            .expect("empty update payload should decode");
         assert_eq!(update.base_text(), "");
         assert_eq!(update.materialized_text(), "");
+    }
+
+    #[test]
+    fn malformed_yrs_history_payloads_fail_decode() {
+        let model = FullTextBodyModel;
+
+        let checkpoint_err = model
+            .history_from_storage_record(
+                RetainedBodyHistoryKind::YrsTextCheckpointV1,
+                "before\n",
+                "not-hex",
+                false,
+            )
+            .expect_err("malformed checkpoint payload should fail");
+        assert!(checkpoint_err.contains("hex") || checkpoint_err.contains("checkpoint"));
+
+        let update_err = model
+            .history_from_storage_record(
+                RetainedBodyHistoryKind::YrsTextUpdateV1,
+                "before\n",
+                r#"{"update_v1_hexes":["not-hex"]}"#,
+                false,
+            )
+            .expect_err("malformed update payload should fail");
+        assert!(update_err.contains("hex") || update_err.contains("update"));
     }
 
     #[test]

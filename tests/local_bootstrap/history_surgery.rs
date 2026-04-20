@@ -320,6 +320,8 @@ fn projector_redact_can_apply_after_terminal_confirmation() {
         &["redact", secret, "private/briefs/cli-redact-tty.html"],
         "\ry",
     );
+    assert!(output.contains("path: private/briefs/cli-redact-tty.html"));
+    assert!(output.contains("document_id: "));
     assert!(output.contains("matching_revisions: 1"));
     assert!(output.contains("selected_seq: 1"));
     assert!(output.contains("redaction: applied"));
@@ -360,6 +362,8 @@ fn projector_redact_uses_tty_browser_to_preview_matching_revisions() {
         &["redact", secret, "private/briefs/cli-redact-browser.html"],
         "q",
     );
+    assert!(output.contains("path: private/briefs/cli-redact-browser.html"));
+    assert!(output.contains("document_id: "));
     assert!(output.contains("matching_revisions: 2"));
     assert!(output.contains("selected_seq: 1"));
     assert!(output.contains("redaction: cancelled"));
@@ -394,6 +398,8 @@ fn projector_purge_can_apply_after_terminal_confirmation() {
         &["purge", "private/briefs/cli-purge-tty.html"],
         "\ry",
     );
+    assert!(output.contains("path: private/briefs/cli-purge-tty.html"));
+    assert!(output.contains("document_id: "));
     assert!(output.contains("clearable_revisions: 1"));
     assert!(output.contains("selected_seq: 1"));
     assert!(output.contains("purge: applied"));
@@ -432,6 +438,8 @@ fn projector_purge_uses_tty_browser_to_preview_clearable_revisions() {
         &["purge", "private/briefs/cli-purge-browser.html"],
         "q",
     );
+    assert!(output.contains("path: private/briefs/cli-purge-browser.html"));
+    assert!(output.contains("document_id: "));
     assert!(output.contains("clearable_revisions: 2"));
     assert!(output.contains("selected_seq: 1"));
     assert!(output.contains("purge: cancelled"));

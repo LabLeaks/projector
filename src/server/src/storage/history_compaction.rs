@@ -154,7 +154,7 @@ pub(crate) fn history_compaction_response(
 
 fn replay_document_revision_states(
     revisions: impl IntoIterator<Item = FileBodyRevision>,
-) -> Vec<(FileBodyRevision, CanonicalBodyState)> {
+) -> Result<Vec<(FileBodyRevision, CanonicalBodyState)>, StoreError> {
     let mut states = HashMap::<String, CanonicalBodyState>::new();
     let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
     let mut replayed = Vec::new();
@@ -173,7 +173,7 @@ fn replay_document_revision_states(
         } else {
             current_state
         };
-        let next_state = revision.replayed_body_state(previous_state);
+        let next_state = revision.replayed_body_state(previous_state)?;
         if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
             anchored_states.insert(
                 (revision.document_id.clone(), anchor_seq),
@@ -183,7 +183,7 @@ fn replay_document_revision_states(
         states.insert(revision.document_id.clone(), next_state.clone());
         replayed.push((revision, next_state));
     }
-    replayed
+    Ok(replayed)
 }
 
 fn replay_previous_state<'a>(
@@ -225,7 +225,7 @@ pub(crate) fn compact_document_body_revisions(
     }
 
     let older_len = document_revisions.len() - revisions_to_keep;
-    let replayed = replay_document_revision_states(document_revisions);
+    let replayed = replay_document_revision_states(document_revisions)?;
     let mut compacted = Vec::new();
     let mut previous_kept_text = None::<String>;
 
@@ -260,12 +260,12 @@ pub(crate) fn compact_document_body_revisions(
 
 pub(crate) fn replay_body_revision_run(
     revisions: impl IntoIterator<Item = FileBodyRevision>,
-) -> HashMap<String, CanonicalBodyState> {
+) -> Result<HashMap<String, CanonicalBodyState>, StoreError> {
     let mut states = HashMap::<String, CanonicalBodyState>::new();
     let mut anchored_states = HashMap::<(String, u64), CanonicalBodyState>::new();
     for revision in revisions {
         let previous_state = replay_previous_state(&revision, &states, &anchored_states);
-        let next_state = revision.replayed_body_state(previous_state);
+        let next_state = revision.replayed_body_state(previous_state)?;
         if let Some(anchor_seq) = revision.effective_checkpoint_anchor_seq() {
             anchored_states.insert(
                 (revision.document_id.clone(), anchor_seq),
@@ -274,7 +274,7 @@ pub(crate) fn replay_body_revision_run(
         }
         states.insert(revision.document_id.clone(), next_state);
     }
-    states
+    Ok(states)
 }
 
 pub(crate) fn latest_checkpoint_anchor_seq(

@@ -169,6 +169,28 @@ fn release_review_validator_rejects_non_object_payload() {
 }
 
 #[test]
+// @verifies PROJECTOR.QUALITY.RELEASE_REVIEW.STRUCTURED_OUTPUT
+fn release_review_validator_rejects_boolean_where_integer_is_required() {
+    let stderr = release_review_validate_response_shape_err(
+        r#"{
+          "baseline": "v0.2.0",
+          "full_scan": false,
+          "summary": "warn",
+          "warnings": [{
+            "id": "bool-line",
+            "category": "maintainability",
+            "severity": "warn",
+            "title": "Bad line type",
+            "why_it_matters": "Boolean line numbers should not validate as integers.",
+            "evidence": [{"path": "src/main.rs", "line": true, "detail": "bad"}],
+            "recommendation": "Use integer line numbers."
+          }]
+        }"#,
+    );
+    assert!(stderr.contains("must be an integer"), "stderr:\n{}", stderr);
+}
+
+#[test]
 // @verifies PROJECTOR.QUALITY.RELEASE_REVIEW.READ_ONLY_SANDBOX
 fn release_review_script_uses_read_only_sandbox() {
     let payload = release_review_dry_run(&[]);
@@ -382,7 +404,7 @@ fn release_review_merge_output_is_stable_across_response_order() {
                 "summary": "warn",
                 "warnings": [{
                     "id": "chunk-two",
-                    "category": "correctness",
+                    "category": "maintainability",
                     "severity": "warn",
                     "title": "Another warning",
                     "why_it_matters": "Ordering should not affect merge output.",

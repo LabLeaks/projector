@@ -56,6 +56,22 @@ ALLOWED_WARNING_CATEGORIES = {
 }
 
 
+def _require_int(
+    value: object,
+    field_name: str,
+    *,
+    positive: bool = False,
+    non_negative: bool = False,
+) -> int:
+    if type(value) is not int:
+        raise SystemExit(f"{field_name} must be an integer")
+    if positive and value <= 0:
+        raise SystemExit(f"{field_name} must be positive")
+    if non_negative and value < 0:
+        raise SystemExit(f"{field_name} must be non-negative")
+    return value
+
+
 def validate_review_payload(payload: dict, *, subject: str) -> dict:
     if not isinstance(payload, dict):
         raise SystemExit(f"{subject} must be an object")
@@ -120,13 +136,11 @@ def validate_review_payload(payload: dict, *, subject: str) -> dict:
                 )
             if not isinstance(evidence["path"], str):
                 raise SystemExit(f"{subject} warning evidence `path` must be a string")
-            if evidence["line"] is not None and not isinstance(evidence["line"], int):
-                raise SystemExit(
-                    f"{subject} warning evidence `line` must be an integer or null"
-                )
-            if isinstance(evidence["line"], int) and evidence["line"] <= 0:
-                raise SystemExit(
-                    f"{subject} warning evidence `line` must be positive when present"
+            if evidence["line"] is not None:
+                _require_int(
+                    evidence["line"],
+                    f"{subject} warning evidence `line`",
+                    positive=True,
                 )
             if not isinstance(evidence["detail"], str):
                 raise SystemExit(f"{subject} warning evidence `detail` must be a string")
@@ -211,18 +225,16 @@ def validate_review_preview(payload: dict, *, subject: str) -> dict:
                 raise SystemExit(
                     f"{subject} review chunk missing required keys: {sorted(missing)}"
                 )
-            if not isinstance(chunk["chunk_index"], int):
-                raise SystemExit(f"{subject} review chunk `chunk_index` must be an integer")
-            if not isinstance(chunk["chunk_count"], int):
-                raise SystemExit(f"{subject} review chunk `chunk_count` must be an integer")
-            if chunk["chunk_index"] < 1:
-                raise SystemExit(
-                    f"{subject} review chunk `chunk_index` must be at least 1"
-                )
-            if chunk["chunk_count"] < 1:
-                raise SystemExit(
-                    f"{subject} review chunk `chunk_count` must be at least 1"
-                )
+            _require_int(
+                chunk["chunk_index"],
+                f"{subject} review chunk `chunk_index`",
+                positive=True,
+            )
+            _require_int(
+                chunk["chunk_count"],
+                f"{subject} review chunk `chunk_count`",
+                positive=True,
+            )
             if chunk["chunk_index"] > chunk["chunk_count"]:
                 raise SystemExit(
                     f"{subject} review chunk `chunk_index` must not exceed `chunk_count`"
@@ -233,14 +245,11 @@ def validate_review_preview(payload: dict, *, subject: str) -> dict:
                 raise SystemExit(f"{subject} review chunk `files` must be a string array")
             if not isinstance(chunk["diff"], str):
                 raise SystemExit(f"{subject} review chunk `diff` must be a string")
-            if not isinstance(chunk["estimated_chars"], int):
-                raise SystemExit(
-                    f"{subject} review chunk `estimated_chars` must be an integer"
-                )
-            if chunk["estimated_chars"] < 0:
-                raise SystemExit(
-                    f"{subject} review chunk `estimated_chars` must be non-negative"
-                )
+            _require_int(
+                chunk["estimated_chars"],
+                f"{subject} review chunk `estimated_chars`",
+                non_negative=True,
+            )
             if not isinstance(chunk["file_contexts"], list):
                 raise SystemExit(f"{subject} review chunk `file_contexts` must be an array")
             for file_context in chunk["file_contexts"]:
@@ -262,21 +271,19 @@ def validate_review_preview(payload: dict, *, subject: str) -> dict:
                     raise SystemExit(
                         f"{subject} review chunk file_context `path` must be a string"
                     )
-                if not isinstance(file_context["start_line"], int):
-                    raise SystemExit(
-                        f"{subject} review chunk file_context `start_line` must be an integer"
-                    )
-                if not isinstance(file_context["end_line"], int):
-                    raise SystemExit(
-                        f"{subject} review chunk file_context `end_line` must be an integer"
-                    )
+                _require_int(
+                    file_context["start_line"],
+                    f"{subject} review chunk file_context `start_line`",
+                    positive=True,
+                )
+                _require_int(
+                    file_context["end_line"],
+                    f"{subject} review chunk file_context `end_line`",
+                    positive=True,
+                )
                 if not isinstance(file_context["content"], str):
                     raise SystemExit(
                         f"{subject} review chunk file_context `content` must be a string"
-                    )
-                if file_context["start_line"] < 1 or file_context["end_line"] < 1:
-                    raise SystemExit(
-                        f"{subject} review chunk file_context lines must be positive"
                     )
                 if file_context["end_line"] < file_context["start_line"]:
                     raise SystemExit(

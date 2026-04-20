@@ -272,6 +272,13 @@ fn server_enforces_history_compaction_policy_on_retained_body_history() {
     );
 }
 
+#[test]
+fn compact_rejects_unknown_dash_prefixed_options() {
+    let repo = temp_repo("cli-compact-unknown-flag");
+    let stderr = run_projector_failure_with_env(&repo, &["compact", "private", "--watc"], &[]);
+    assert!(stderr.contains("unknown compact option: --watc"));
+}
+
 // @verifies PROJECTOR.SERVER.HISTORY.REJECTS_INVALID_COMPACTION_POLICY
 #[test]
 fn server_rejects_zero_valued_compaction_policy() {

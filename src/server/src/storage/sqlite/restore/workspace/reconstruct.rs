@@ -24,7 +24,7 @@ pub(super) fn reconstruct_workspace_at_cursor(
     let latest_paths = latest_path_revisions(path_history, cursor);
     let latest_bodies = replay_body_revision_run(body_history.into_iter().filter(|revision| {
         effective_workspace_cursor(revision.seq, revision.workspace_cursor) <= cursor
-    }));
+    }))?;
 
     let mut entries = latest_paths
         .into_values()

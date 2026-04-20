@@ -51,6 +51,14 @@ pub(super) fn restore_workspace_at_cursor_tx(
     let mut state = current_state;
     state.snapshot = restored_snapshot;
     let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
+    for body in state.snapshot.bodies.clone() {
+        let canonical_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(body.text);
+        body_persistence.write_current_state(
+            &mut state.snapshot,
+            &body.document_id,
+            &canonical_state,
+        )?;
+    }
     for change in changes {
         let event = make_event(
             &mut state,

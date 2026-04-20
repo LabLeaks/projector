@@ -6,7 +6,6 @@ Owns document body update and restore mutation flows above the body-state, body-
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use projector_domain::{
@@ -26,8 +25,6 @@ use super::history::file_read_body_revisions;
 use super::history_compaction::replay_body_revision_run;
 use super::provenance::{file_append_workspace_event, insert_event_tx};
 use super::workspaces::workspace_dir;
-
-static BODY_MUTATION_FALLBACK_CLOCK: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn file_persist_workspace_snapshot(
     state_dir: &Path,
@@ -103,7 +100,7 @@ pub(crate) fn file_update_document(
         &request.workspace_id,
         ProvenanceEvent {
             cursor: event_cursor,
-            timestamp_ms: now_ms(),
+            timestamp_ms: now_ms()?,
             actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
             document_id: Some(document_id),
             mount_relative_path: Some(entry.mount_relative_path.display().to_string()),
@@ -117,7 +114,7 @@ pub(crate) fn file_update_document(
         &request.actor_id,
         &request.document_id,
         merge.retained_history(),
-        now_ms(),
+        now_ms()?,
     )?;
     Ok(())
 }
@@ -181,7 +178,7 @@ pub(crate) fn file_restore_document_body_revision(
                 request.document_id, request.seq
             ))
         })?;
-    let fallback_target_state = target_revision.materialized_body_state();
+    let fallback_target_state = target_revision.materialized_body_state()?;
     let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
     let current_state = body_persistence.load_current_state(&snapshot, &document_id)?;
 
@@ -192,7 +189,7 @@ pub(crate) fn file_restore_document_body_revision(
     let replayed_target_state =
         replay_body_revision_run(body_revisions.into_iter().filter(|revision| {
             revision.document_id == request.document_id && revision.seq <= request.seq
-        }))
+        }))?
         .remove(request.document_id.as_str())
         .unwrap_or_else(|| fallback_target_state.clone());
     let target_state =
@@ -211,7 +208,7 @@ pub(crate) fn file_restore_document_body_revision(
         &request.workspace_id,
         ProvenanceEvent {
             cursor: event_cursor,
-            timestamp_ms: now_ms(),
+            timestamp_ms: now_ms()?,
             actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
             document_id: Some(document_id.clone()),
             mount_relative_path: Some(target_mount_relative_path.display().to_string()),
@@ -230,7 +227,7 @@ pub(crate) fn file_restore_document_body_revision(
         &request.actor_id,
         &request.document_id,
         &FULL_TEXT_BODY_MODEL.restored_history(&current_state, &target_state),
-        now_ms(),
+        now_ms()?,
     )?;
     if entry.deleted
         || target_mount_relative_path != entry.mount_relative_path
@@ -248,7 +245,7 @@ pub(crate) fn file_restore_document_body_revision(
                 relative_path: target_relative_path.display().to_string(),
                 deleted: false,
                 event_kind: "document_restored".to_owned(),
-                timestamp_ms: now_ms(),
+                timestamp_ms: now_ms()?,
             },
         )?;
     }
@@ -446,8 +443,8 @@ pub(crate) async fn postgres_restore_document_body_revision(
                 request.document_id, request.seq
             ))
         })?
-        .materialized_body_state();
-    let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())
+        .materialized_body_state()?;
+    let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())?
         .remove(request.document_id.as_str())
         .ok_or_else(|| {
             StoreError::new(format!(
@@ -541,11 +538,11 @@ pub(crate) fn snapshot_subset_for_documents(
     }
 }
 
-fn now_ms() -> u128 {
+fn now_ms() -> Result<u128, StoreError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
-        .unwrap_or_else(|_| BODY_MUTATION_FALLBACK_CLOCK.fetch_add(1, Ordering::Relaxed) as u128)
+        .map_err(|err| StoreError::new(format!("system clock before unix epoch: {err}")))
 }
 
 pub(crate) struct MergeTextUpdate(super::body_state::BodyConvergenceResult);

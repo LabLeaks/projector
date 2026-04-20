@@ -87,23 +87,19 @@ fn release_review_extract_context_ranges_with_mode(
     full_scan: bool,
 ) -> Value {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 path = sys.argv[2]
 content = sys.argv[3]
 start = int(sys.argv[4])
 end = int(sys.argv[5])
 full_scan = sys.argv[6] == "true"
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(json.dumps(module.extract_context_ranges(path, content, [(start, end)], full_scan)))
+from release_review_context import extract_context_ranges
+print(json.dumps(extract_context_ranges(path, content, [(start, end)], full_scan)))
 "#;
 
     release_review_python_helper(
@@ -133,18 +129,14 @@ pub fn release_review_extract_full_scan_context_ranges(path: &str, content: &str
 
 pub fn release_review_chunk_helper(context_chars: usize) -> Value {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 context_chars = int(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from release_review_pipeline import build_pass_chunks
 review_pass = {"name": "test", "focus": ["budgeting"], "files": ["src/example.rs"]}
 contexts = [
     {
@@ -160,7 +152,7 @@ contexts = [
         "content": "y" * context_chars,
     },
 ]
-chunks, runner_warnings = module.build_pass_chunks(
+chunks, runner_warnings = build_pass_chunks(
     root,
     sys.argv[3],
     "jj",
@@ -179,19 +171,15 @@ print(json.dumps({"chunks": chunks, "runner_warnings": runner_warnings}))
 
 pub fn release_review_changed_line_ranges(diff: &str) -> Value {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 diff = sys.argv[2]
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(json.dumps(module.parse_changed_line_ranges(diff)))
+from release_review_context import parse_changed_line_ranges
+print(json.dumps(parse_changed_line_ranges(diff)))
 "#;
 
     release_review_python_helper(script, &[diff])
@@ -199,19 +187,15 @@ print(json.dumps(module.parse_changed_line_ranges(diff)))
 
 pub fn release_review_passes_for(files: &[&str]) -> Value {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 files = sys.argv[2:]
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(json.dumps(module.build_review_passes(files)))
+from release_review_planning import build_review_passes
+print(json.dumps(build_review_passes(files)))
 "#;
 
     release_review_python_helper(script, files)
@@ -219,19 +203,15 @@ print(json.dumps(module.build_review_passes(files)))
 
 pub fn release_review_merge_responses(responses: &Value) -> Value {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 responses = json.loads(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-print(json.dumps(module.merge_pass_responses("v0.2.0", False, responses, [])))
+from release_review_merge import merge_pass_responses
+print(json.dumps(merge_pass_responses("v0.2.0", False, responses, [])))
 "#;
 
     let responses_json = serde_json::to_string(responses).expect("responses should serialize");
@@ -240,20 +220,16 @@ print(json.dumps(module.merge_pass_responses("v0.2.0", False, responses, [])))
 
 fn release_review_validate_response_shape_output(payload: &str) -> std::process::Output {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 payload = json.loads(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from release_review_contract import validate_review_payload
 try:
-    validated = module.validate_response_shape(payload)
+    validated = validate_review_payload(payload, subject="release review response")
     print(json.dumps(validated))
 except SystemExit as err:
     print(str(err), file=sys.stderr)
@@ -294,20 +270,16 @@ pub fn release_review_validate_response_shape_err(payload: &str) -> String {
 
 pub fn release_review_validate_response_shape_nonjson_value_err(payload: &str) -> String {
     let script = r#"
-import importlib.util
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 payload = json.loads(sys.argv[2])
-spec = importlib.util.spec_from_file_location(
-    "release_review", root / "scripts" / "review-projector-release-style.py"
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from release_review_contract import validate_review_payload
 try:
-    validated = module.validate_response_shape(payload)
+    validated = validate_review_payload(payload, subject="release review response")
     print(json.dumps(validated))
 except SystemExit as err:
     print(str(err), file=sys.stderr)
@@ -334,15 +306,13 @@ except SystemExit as err:
 pub fn python_entrypoint_runtime_flag(script_name: &str) -> Value {
     let script_path = repo_root().join("scripts").join(script_name);
     let script = r#"
-import importlib.util
 import json
 import pathlib
+import runpy
 import sys
 
 script_path = pathlib.Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location("entrypoint", script_path)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+runpy.run_path(str(script_path))
 print(json.dumps({"dont_write_bytecode": sys.dont_write_bytecode}))
 "#;
     let script_arg = script_path.to_string_lossy().into_owned();

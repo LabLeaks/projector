@@ -49,7 +49,7 @@ pub(crate) fn list_body_revisions(
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
         .map(|revision: FileBodyRevision| revision.to_public_revision())
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     if revisions.len() > limit {
         revisions = revisions.split_off(revisions.len() - limit);
     }

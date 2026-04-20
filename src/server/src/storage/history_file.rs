@@ -221,7 +221,7 @@ pub(crate) fn file_list_body_revisions(
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
         .map(|revision| revision.to_public_revision())
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     if revisions.len() > limit {
         revisions = revisions.split_off(revisions.len() - limit);
     }
@@ -256,6 +256,7 @@ pub(crate) fn file_purge_document_body_history(
     request: &PurgeDocumentBodyHistoryRequest,
 ) -> Result<(), StoreError> {
     let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
+    let original_revisions = revisions.clone();
     let mut matched_seqs = Vec::new();
     for revision in revisions.iter_mut() {
         if revision.document_id == request.document_id
@@ -278,12 +279,7 @@ pub(crate) fn file_purge_document_body_history(
         &matched_seqs,
         "purge",
     )?;
-    let encoded =
-        serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
-    fs::write(
-        file_body_revisions_path(state_dir, &request.workspace_id),
-        encoded,
-    )?;
+    file_write_body_revisions(state_dir, &request.workspace_id, &revisions)?;
 
     let current_snapshot = file_read_workspace_snapshot(state_dir, &request.workspace_id)?;
     let live_entry = current_snapshot
@@ -295,7 +291,7 @@ pub(crate) fn file_purge_document_body_history(
         live_entry.map(|entry| entry.mount_relative_path.display().to_string());
     let relative_path = live_entry.map(|entry| entry.relative_path.display().to_string());
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
-    file_append_workspace_event(
+    if let Err(event_error) = file_append_workspace_event(
         state_dir,
         &request.workspace_id,
         ProvenanceEvent {
@@ -312,7 +308,16 @@ pub(crate) fn file_purge_document_body_history(
             ),
             kind: ProvenanceEventKind::DocumentHistoryPurged,
         },
-    )?;
+    ) {
+        let rollback_result =
+            file_write_body_revisions(state_dir, &request.workspace_id, &original_revisions);
+        return Err(match rollback_result {
+            Ok(()) => event_error,
+            Err(rollback_error) => StoreError::new(format!(
+                "purged retained body history but failed to record provenance event and rollback revisions: event error: {event_error}; rollback error: {rollback_error}"
+            )),
+        });
+    }
     Ok(())
 }
 
@@ -321,6 +326,7 @@ pub(crate) fn file_redact_document_body_history(
     request: &RedactDocumentBodyHistoryRequest,
 ) -> Result<(), StoreError> {
     let mut revisions = file_read_body_revisions(state_dir, &request.workspace_id)?;
+    let original_revisions = revisions.clone();
     let mut matched_seqs = Vec::new();
     for revision in revisions.iter_mut() {
         if revision.document_id != request.document_id {
@@ -333,8 +339,8 @@ pub(crate) fn file_redact_document_body_history(
     }
     if matched_seqs.is_empty() {
         return Err(StoreError::new(format!(
-            "document {} has no retained body history matching {:?} in workspace {}",
-            request.document_id, request.exact_text, request.workspace_id
+            "document {} has no retained body history matching the requested exact text in workspace {}",
+            request.document_id, request.workspace_id
         )));
     }
     ensure_expected_history_match_set(
@@ -343,12 +349,7 @@ pub(crate) fn file_redact_document_body_history(
         &matched_seqs,
         "redaction",
     )?;
-    let encoded =
-        serde_json::to_vec_pretty(&revisions).map_err(|err| StoreError::new(err.to_string()))?;
-    fs::write(
-        file_body_revisions_path(state_dir, &request.workspace_id),
-        encoded,
-    )?;
+    file_write_body_revisions(state_dir, &request.workspace_id, &revisions)?;
 
     let current_snapshot = file_read_workspace_snapshot(state_dir, &request.workspace_id)?;
     let live_entry = current_snapshot
@@ -360,7 +361,7 @@ pub(crate) fn file_redact_document_body_history(
         live_entry.map(|entry| entry.mount_relative_path.display().to_string());
     let relative_path = live_entry.map(|entry| entry.relative_path.display().to_string());
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
-    file_append_workspace_event(
+    if let Err(event_error) = file_append_workspace_event(
         state_dir,
         &request.workspace_id,
         ProvenanceEvent {
@@ -377,7 +378,16 @@ pub(crate) fn file_redact_document_body_history(
             ),
             kind: ProvenanceEventKind::DocumentHistoryRedacted,
         },
-    )?;
+    ) {
+        let rollback_result =
+            file_write_body_revisions(state_dir, &request.workspace_id, &original_revisions);
+        return Err(match rollback_result {
+            Ok(()) => event_error,
+            Err(rollback_error) => StoreError::new(format!(
+                "redacted retained body history but failed to record provenance event and rollback revisions: event error: {event_error}; rollback error: {rollback_error}"
+            )),
+        });
+    }
     Ok(())
 }
 
@@ -495,7 +505,7 @@ pub(crate) fn file_reconstruct_workspace_at_cursor(
 
     let latest_bodies = replay_body_revision_run(body_history.into_iter().filter(|revision| {
         effective_workspace_cursor(revision.seq, revision.workspace_cursor) <= cursor
-    }));
+    }))?;
 
     let mut entries = latest_paths
         .into_values()

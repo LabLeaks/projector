@@ -30,13 +30,21 @@ pub(crate) async fn postgres_list_sync_entries(
         .await?;
 
     let mut entries = Vec::new();
+    let mut reconstruction_failures = Vec::new();
     for row in rows {
         let workspace_id = row.get::<_, String>("id");
         let source_repo_name = row.get::<_, Option<String>>("source_repo_name");
         let remote_path = row.get::<_, String>("mount_path");
         let snapshot =
-            postgres_reconstruct_workspace_at_cursor(client, &workspace_id, i64::MAX as u64)
-                .await?;
+            match postgres_reconstruct_workspace_at_cursor(client, &workspace_id, i64::MAX as u64)
+                .await
+            {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    reconstruction_failures.push(format!("{workspace_id}: {error}"));
+                    continue;
+                }
+            };
         let kind = row
             .get::<_, Option<String>>("entry_kind")
             .as_deref()
@@ -55,6 +63,13 @@ pub(crate) async fn postgres_list_sync_entries(
             last_updated_ms,
             preview: sync_entry_preview_summary(&snapshot, &kind),
         });
+    }
+
+    if entries.is_empty() && !reconstruction_failures.is_empty() {
+        return Err(StoreError::new(format!(
+            "failed to reconstruct sync entries: {}",
+            reconstruction_failures.join("; ")
+        )));
     }
 
     Ok(entries)

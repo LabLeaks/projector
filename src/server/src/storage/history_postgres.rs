@@ -35,6 +35,18 @@ use super::history_surgery::{
 };
 use super::provenance::insert_event_tx;
 
+fn pg_u64(row: &tokio_postgres::Row, column: &str) -> Result<u64, StoreError> {
+    u64::try_from(row.get::<_, i64>(column))
+        .map_err(|_| StoreError::new(format!("{column} must be non-negative")))
+}
+
+fn pg_u128_millis(row: &tokio_postgres::Row, column: &str) -> Result<u128, StoreError> {
+    let value = row.get::<_, i64>(column);
+    let millis = u64::try_from(value)
+        .map_err(|_| StoreError::new(format!("{column} must be non-negative")))?;
+    Ok(u128::from(millis))
+}
+
 async fn postgres_read_history_compaction_policies(
     client: &impl GenericClient,
     workspace_id: &str,
@@ -159,23 +171,25 @@ pub(crate) async fn postgres_list_body_revisions(
             let kind =
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
                     .map_err(StoreError::new)?;
-            Ok(FileBodyRevision {
-                seq: row.get::<_, i64>("seq") as u64,
+            FileBodyRevision {
+                seq: pg_u64(&row, "seq")?,
                 workspace_cursor: 0,
                 actor_id: row.get::<_, String>("actor_id"),
                 document_id: row.get::<_, String>("document_id"),
                 checkpoint_anchor_seq: row
                     .get::<_, Option<i64>>("checkpoint_anchor_seq")
-                    .map(|seq| seq as u64),
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::new("checkpoint_anchor_seq must be non-negative"))?,
                 history_kind: kind,
                 base_text: row.get::<_, String>("base_text"),
                 body_text: row.get::<_, String>("body_text"),
                 conflicted: row.get::<_, bool>("conflicted"),
-                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+                timestamp_ms: pg_u128_millis(&row, "timestamp_ms")?,
             }
-            .to_public_revision())
+            .to_public_revision()
         })
-        .collect::<Result<Vec<_>, StoreError>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     revisions.reverse();
     Ok(revisions)
 }
@@ -201,18 +215,20 @@ pub(crate) async fn postgres_preview_redact_document_body_history(
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
                     .map_err(StoreError::new)?;
             Ok(FileBodyRevision {
-                seq: row.get::<_, i64>("seq") as u64,
+                seq: pg_u64(&row, "seq")?,
                 workspace_cursor: 0,
                 actor_id: row.get::<_, String>("actor_id"),
                 document_id: row.get::<_, String>("document_id"),
                 checkpoint_anchor_seq: row
                     .get::<_, Option<i64>>("checkpoint_anchor_seq")
-                    .map(|seq| seq as u64),
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::new("checkpoint_anchor_seq must be non-negative"))?,
                 history_kind: kind,
                 base_text: row.get::<_, String>("base_text"),
                 body_text: row.get::<_, String>("body_text"),
                 conflicted: row.get::<_, bool>("conflicted"),
-                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+                timestamp_ms: pg_u128_millis(&row, "timestamp_ms")?,
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
@@ -245,18 +261,20 @@ pub(crate) async fn postgres_preview_purge_document_body_history(
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
                     .map_err(StoreError::new)?;
             Ok(FileBodyRevision {
-                seq: row.get::<_, i64>("seq") as u64,
+                seq: pg_u64(&row, "seq")?,
                 workspace_cursor: 0,
                 actor_id: row.get::<_, String>("actor_id"),
                 document_id: row.get::<_, String>("document_id"),
                 checkpoint_anchor_seq: row
                     .get::<_, Option<i64>>("checkpoint_anchor_seq")
-                    .map(|seq| seq as u64),
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::new("checkpoint_anchor_seq must be non-negative"))?,
                 history_kind: kind,
                 base_text: row.get::<_, String>("base_text"),
                 body_text: row.get::<_, String>("body_text"),
                 conflicted: row.get::<_, bool>("conflicted"),
-                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+                timestamp_ms: pg_u128_millis(&row, "timestamp_ms")?,
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
@@ -489,8 +507,8 @@ pub(crate) async fn postgres_redact_document_body_history(
         .collect::<Vec<_>>();
     if matched_seqs.is_empty() {
         return Err(StoreError::new(format!(
-            "document {} has no retained body history matching {:?} in workspace {}",
-            request.document_id, request.exact_text, request.workspace_id
+            "document {} has no retained body history matching the requested exact text in workspace {}",
+            request.document_id, request.workspace_id
         )));
     }
     ensure_expected_history_match_set(
@@ -640,13 +658,15 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
                     .map_err(StoreError::new)?;
             Ok(FileBodyRevision {
-                seq: row.get::<_, i64>("seq") as u64,
-                workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
+                seq: pg_u64(&row, "seq")?,
+                workspace_cursor: pg_u64(&row, "workspace_cursor")?,
                 actor_id: String::new(),
                 document_id: row.get::<_, String>("document_id"),
                 checkpoint_anchor_seq: row
                     .get::<_, Option<i64>>("checkpoint_anchor_seq")
-                    .map(|seq| seq as u64),
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| StoreError::new("checkpoint_anchor_seq must be non-negative"))?,
                 history_kind: kind,
                 base_text: row.get::<_, String>("base_text"),
                 body_text: row.get::<_, String>("body_text"),
@@ -655,7 +675,7 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
             })
         })
         .collect::<Result<Vec<_>, StoreError>>()?;
-    let body_map = replay_body_revision_run(body_revisions);
+    let body_map = replay_body_revision_run(body_revisions)?;
 
     let mut entries = path_rows
         .into_iter()

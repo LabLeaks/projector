@@ -16,7 +16,12 @@ def merge_pass_responses(
     warnings: list[dict] = []
     seen: set[str] = set()
 
-    for pass_name, _chunk_index, response in responses:
+    ordered_responses = sorted(
+        responses,
+        key=lambda item: (item[0], item[1], json.dumps(item[2], sort_keys=True)),
+    )
+
+    for pass_name, _chunk_index, response in ordered_responses:
         for warning in response.get("warnings", []):
             dedupe_key = warning_dedupe_key(warning)
             if dedupe_key in seen:
@@ -52,6 +57,7 @@ def warning_dedupe_key(warning: dict) -> str:
         }
         for item in warning.get("evidence", [])
     ]
+    evidence.sort(key=lambda item: (item["path"] or "", item["line"] or 0, item["detail"] or ""))
     return json.dumps(
         {
             "category": warning.get("category"),

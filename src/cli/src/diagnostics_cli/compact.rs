@@ -73,33 +73,52 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
     let mut frequency = None;
     let mut inherit = false;
     let mut repo_relative_path = None;
+    let mut parse_flags = true;
     let mut idx = 0;
     while idx < args.len() {
-        match args[idx].as_str() {
-            "--revisions" => {
-                idx += 1;
-                revisions = Some(
-                    args.get(idx)
-                        .ok_or("missing value after --revisions")?
-                        .parse::<u32>()?,
-                );
-            }
-            "--frequency" => {
-                idx += 1;
-                frequency = Some(
-                    args.get(idx)
-                        .ok_or("missing value after --frequency")?
-                        .parse::<u32>()?,
-                );
-            }
-            "--inherit" => inherit = true,
-            other => {
-                if repo_relative_path.is_some() {
-                    return Err(format!("unexpected extra compact argument: {other}").into());
+        if parse_flags {
+            match args[idx].as_str() {
+                "--" => {
+                    parse_flags = false;
+                    idx += 1;
+                    continue;
                 }
-                repo_relative_path = Some(normalize_projection_relative_path(other)?);
+                "--revisions" => {
+                    idx += 1;
+                    revisions = Some(
+                        args.get(idx)
+                            .ok_or("missing value after --revisions")?
+                            .parse::<u32>()?,
+                    );
+                    idx += 1;
+                    continue;
+                }
+                "--frequency" => {
+                    idx += 1;
+                    frequency = Some(
+                        args.get(idx)
+                            .ok_or("missing value after --frequency")?
+                            .parse::<u32>()?,
+                    );
+                    idx += 1;
+                    continue;
+                }
+                "--inherit" => {
+                    inherit = true;
+                    idx += 1;
+                    continue;
+                }
+                other if other.starts_with('-') => {
+                    return Err(format!("unknown compact option: {other}").into());
+                }
+                _ => {}
             }
         }
+        let other = args[idx].as_str();
+        if repo_relative_path.is_some() {
+            return Err(format!("unexpected extra compact argument: {other}").into());
+        }
+        repo_relative_path = Some(normalize_projection_relative_path(other)?);
         idx += 1;
     }
 
@@ -124,6 +143,18 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
         frequency,
         inherit,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_compact_args;
+
+    #[test]
+    fn compact_rejects_unknown_dash_prefixed_options() {
+        let args = vec!["private".to_owned(), "--watc".to_owned()];
+        let err = parse_compact_args(&args).expect_err("unknown option should fail");
+        assert!(err.to_string().contains("unknown compact option: --watc"));
+    }
 }
 
 fn print_effective_policy(

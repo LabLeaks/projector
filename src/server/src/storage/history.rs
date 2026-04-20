@@ -63,24 +63,26 @@ impl FileBodyRevision {
         }
     }
 
-    pub(crate) fn retained_history(&self) -> RetainedBodyHistoryPayload {
-        FULL_TEXT_BODY_MODEL.history_from_storage_record(
-            self.history_kind,
-            self.base_text.clone(),
-            self.body_text.clone(),
-            self.conflicted,
-        )
+    pub(crate) fn retained_history(&self) -> Result<RetainedBodyHistoryPayload, StoreError> {
+        FULL_TEXT_BODY_MODEL
+            .history_from_storage_record(
+                self.history_kind,
+                self.base_text.clone(),
+                self.body_text.clone(),
+                self.conflicted,
+            )
+            .map_err(StoreError::new)
     }
 
-    pub(crate) fn materialized_body_state(&self) -> CanonicalBodyState {
-        self.retained_history().materialized_body_state()
+    pub(crate) fn materialized_body_state(&self) -> Result<CanonicalBodyState, StoreError> {
+        Ok(self.retained_history()?.materialized_body_state())
     }
 
     pub(crate) fn replayed_body_state(
         &self,
         previous_state: Option<&CanonicalBodyState>,
-    ) -> CanonicalBodyState {
-        self.retained_history().replayed_body_state(previous_state)
+    ) -> Result<CanonicalBodyState, StoreError> {
+        Ok(self.retained_history()?.replayed_body_state(previous_state))
     }
 
     pub(crate) fn effective_checkpoint_anchor_seq(&self) -> Option<u64> {
@@ -93,20 +95,20 @@ impl FileBodyRevision {
         })
     }
 
-    pub(crate) fn to_public_revision(&self) -> DocumentBodyRevision {
-        self.retained_history().to_public_revision(
+    pub(crate) fn to_public_revision(&self) -> Result<DocumentBodyRevision, StoreError> {
+        Ok(self.retained_history()?.to_public_revision(
             self.seq,
             self.actor_id.clone(),
             self.document_id.clone(),
             self.checkpoint_anchor_seq,
             self.history_kind,
             self.timestamp_ms,
-        )
+        ))
     }
 
     pub(crate) fn redacted(&self, exact_text: &str) -> Result<Option<Self>, StoreError> {
         let redacted = FULL_TEXT_BODY_MODEL
-            .redact_history_payload(&self.retained_history(), exact_text, "[REDACTED]")
+            .redact_history_payload(&self.retained_history()?, exact_text, "[REDACTED]")
             .map_err(StoreError::new)?;
         Ok(redacted.map(|payload| {
             let mut redacted = self.clone();
@@ -126,8 +128,8 @@ impl FileBodyRevision {
             return Ok(None);
         };
         let preview_lines = build_redaction_preview_lines(
-            &self.retained_history(),
-            &redacted.retained_history(),
+            &self.retained_history()?,
+            &redacted.retained_history()?,
             exact_text,
         );
         Ok(Some(DocumentBodyRedactionMatch {
@@ -138,7 +140,7 @@ impl FileBodyRevision {
             history_kind: self.history_kind.into(),
             occurrences: self.base_text.matches(exact_text).count()
                 + self
-                    .retained_history()
+                    .retained_history()?
                     .materialized_text()
                     .matches(exact_text)
                     .count(),
