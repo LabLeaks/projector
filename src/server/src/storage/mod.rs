@@ -12,6 +12,8 @@ mod error;
 mod file_store;
 mod history;
 mod history_compaction;
+mod history_file;
+mod history_postgres;
 mod history_restore;
 mod history_surgery;
 mod manifest;
