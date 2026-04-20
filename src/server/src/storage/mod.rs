@@ -21,6 +21,9 @@ mod manifest_file;
 mod manifest_postgres;
 mod postgres_store;
 mod provenance;
+mod provenance_file;
+mod provenance_postgres;
+mod provenance_synthetic;
 mod sqlite;
 mod workspaces;
 
