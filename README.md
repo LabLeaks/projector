@@ -4,6 +4,17 @@
 
 The goal is to let agents and humans read and edit plain files inside repo-local gitignored paths while the real source of truth lives elsewhere and syncs across checkouts.
 
+## What's New In 0.2.0
+
+`0.2.0` is the first real public step beyond initial dogfood.
+
+This release turns `projector` from durable private file sync into a serious private shared-context utility for repo-local text:
+
+- concurrent UTF-8 text edits now converge through CRDT-backed text state rather than the old server-side three-way-merge fallback
+- retained history is now a first-class feature with readable snapshot-and-diff history, restore, redact, and purge
+- retained history can compact under server-owned path policy without entering the repo's public Git history
+- the CLI now exposes explicit history-surgery and compaction flows: `projector redact`, `projector purge`, and `projector compact`
+
 ## Why
 
 Keeping private working files inside a product repo, but outside version control, has two good properties:
@@ -55,21 +66,18 @@ The canonical product contract lives under [specs/](/Users/gk/work/lableaks/proj
 
 ## Product shape
 
-- canonical source of truth lives on a server first and a cloud service later
-- single-user v0 should assume one or more user-supplied server profiles rather than a local embedded server
-- SQLite should be the default single-user BYO server store
-- sysbox-backed container isolation should be the default single-user BYO deploy shape
-- Postgres should be the advanced cloud, PaaS, or managed-service store
-- each sync entry still has one authoritative server profile at a time
-- each sync entry is a whole remote object with a stable server-side sync-entry id, not an attached subset
-- machine-global server profiles should be the main connection model
-- a machine-global sync daemon should be the normal always-on mode
+- private working files stay physically present in a repo checkout, but outside the repo's public VCS history
+- the canonical source of truth lives on a user-supplied server profile rather than a local embedded server
+- the normal single-user BYO path is `projector` plus a remote `projector-server`, with SQLite as the default store and sysbox-isolated deploy as the default deploy shape
+- Postgres remains the advanced store for cloud, PaaS, or managed-service environments
+- each sync entry is one authoritative remote object with one active server profile at a time
+- a machine-global sync daemon is the normal always-on mode
 - each repo checkout materializes one or more local gitignored projection mounts
 - `projector add` is local-first and bootstraps local content immediately; `projector get` is remote-first
-- agents edit normal local files
-- the sync daemon pushes and pulls changes continuously
-- concurrent edits reconcile through server-side CRDT-backed text state instead of relying on git commits
-- retained history supports restore, redact, purge, and path-scoped compaction policy without entering the repo's public VCS history
+- agents still edit normal local files
+- the daemon pushes and pulls changes continuously
+- concurrent UTF-8 text edits reconcile through CRDT-backed text state
+- retained history supports readable history, restore, redact, purge, and path-scoped compaction policy without entering the repo's public Git history
 
 ## Scope
 
@@ -90,7 +98,6 @@ It is not a general-purpose repo file sync system.
 
 - [PRODUCT.md](/Users/gk/work/lableaks/projects/projector/PRODUCT.md)
 - [ARCHITECTURE.md](/Users/gk/work/lableaks/projects/projector/ARCHITECTURE.md)
-- [V0.md](/Users/gk/work/lableaks/projects/projector/V0.md)
 - [SLICE1.md](/Users/gk/work/lableaks/projects/projector/SLICE1.md)
 - [specs/](/Users/gk/work/lableaks/projects/projector/specs/root.rs)
 
@@ -114,6 +121,8 @@ In the normal BYO-server flow, users do not manually install `projector-server` 
 ## Release
 
 `projector` now carries its own local release wrapper and GitHub release automation.
+
+Release notes for the current public release live in [CHANGELOG.md](/Users/gk/work/lableaks/projects/projector/CHANGELOG.md).
 
 Run the local release wrapper with:
 

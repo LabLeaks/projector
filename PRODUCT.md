@@ -6,7 +6,7 @@ Early design notes for `projector`.
 
 `projector` is a private synced context layer for repo-local strategic files projected into gitignored paths such as `_project/`.
 
-The current design target is a dogfoodable v0 for one owner using multiple repos, machines, and agents. See [V0.md](/Users/gk/work/lableaks/projects/projector/V0.md).
+The current design target is a dogfoodable single-owner release for one owner using multiple repos, machines, and agents.
 
 The product is specifically tuned for an agentic development workflow where private project context should stay physically co-located with the code checkout even when it should not enter the repo's public VCS cycle.
 
@@ -26,7 +26,7 @@ A plain gitignored local folder such as `_project/` solves only the first two.
 
 `projector` should treat repo-local gitignored mounts as synced workspace projections, not the source of truth.
 
-The source of truth should live on private servers first and later a cloud service. For single-user v0, the base case should be one or more user-supplied private server profiles that repos, machines, and agents can all reach. Each sync entry still has exactly one authoritative server profile at a time, and each sync entry is a whole remote object rather than an arbitrary subset. Local projection mounts should be materialized working mirrors that remain editable as plain files.
+The source of truth should live on private servers first and later a cloud service. For the current single-user product shape, the base case should be one or more user-supplied private server profiles that repos, machines, and agents can all reach. Each sync entry still has exactly one authoritative server profile at a time, and each sync entry is a whole remote object rather than an arbitrary subset. Local projection mounts should be materialized working mirrors that remain editable as plain files.
 
 ## User workflow
 
@@ -45,7 +45,7 @@ The source of truth should live on private servers first and later a cloud servi
 - concurrent editing support
 - identity and provenance for changes
 
-For v0, the relevant "editors" are usually the same owner's agents, terminals, scripts, and machines rather than a room of humans with files open interactively.
+For the current product shape, the relevant "editors" are usually the same owner's agents, terminals, scripts, and machines rather than a room of humans with files open interactively.
 
 ## Non-goals
 
@@ -82,7 +82,7 @@ The body engine does not by itself solve:
 
 So `projector` still needs a document-set model above per-doc CRDT bodies.
 
-## V0 product cut
+## Current product cut
 
 The first usable version should optimize for dependable dogfooding, not breadth.
 
@@ -91,13 +91,13 @@ Include:
 - one or more repo-local sync-entry attachments per repo projector configuration
 - UTF-8 text-file sync into configured gitignored mounts
 - local daemon plus server-first state
-- one boring bring-your-own private server story for single-user v0
+- one boring bring-your-own private server story for the current single-user release
 
 ## Single-User Server Story
 
 The implementation can support multiple server storage or deployment modes, but the product story should be narrower than the implementation story.
 
-For single-user v0, the recommended lane should be:
+For the current single-user release, the recommended lane should be:
 
 - one or more named private server profiles the user already runs or provisions
 - each sync entry points at exactly one authoritative server profile
@@ -128,7 +128,7 @@ That suggests a clean command split:
 - `projector connect` for machine-global server profiles, profile selection, and health
 - `projector doctor` for explicit repo setup and sync diagnostics without overloading `status`
 - `projector deploy` for guided remote provisioning
-- managed cloud later, not as a v0 requirement
+- managed cloud later, not as a current-release requirement
 
 Exclude:
 

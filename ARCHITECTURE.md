@@ -39,7 +39,7 @@ See [BODY_CRDT_DECISION.md](/Users/gk/work/lableaks/projects/projector/BODY_CRDT
 2. per-document body sync
 3. durable provenance log
 
-For the first implementation, these layers should be cut to the minimum needed for single-owner multi-machine dogfooding. See [V0.md](/Users/gk/work/lableaks/projects/projector/V0.md).
+For the first implementation, these layers should be cut to the minimum needed for single-owner multi-machine dogfooding.
 
 ## Design stance
 
@@ -140,7 +140,7 @@ The server should own durable truth:
 - body state
 - provenance log
 
-For single-user v0, the product should assume one or more user-supplied server profiles rather than a local embedded server lane. Each sync entry still has one authoritative server profile at a time, and each sync entry should be a first-class whole remote object rather than a subset attachment. That means the architecture can keep multiple storage or deployment backends internally, but the user-facing path should optimize for binding repos and machines to a real shared authority instead of pretending local-only hosting solves the main problem. Within that, SQLite should be the normal BYO backend and Postgres should be the advanced cloud/PaaS backend.
+For the current single-user product shape, the product should assume one or more user-supplied server profiles rather than a local embedded server lane. Each sync entry still has one authoritative server profile at a time, and each sync entry should be a first-class whole remote object rather than a subset attachment. That means the architecture can keep multiple storage or deployment backends internally, but the user-facing path should optimize for binding repos and machines to a real shared authority instead of pretending local-only hosting solves the main problem. Within that, SQLite should be the normal BYO backend and Postgres should be the advanced cloud/PaaS backend.
 
 The server should not care about local filesystem details such as watchdog semantics, debounce quirks, or editor reload behavior.
 
@@ -165,7 +165,7 @@ This layer answers questions like:
 
 A new text file is not just "new text". It is a new manifest entry plus a new document body.
 
-For v0, the manifest only needs to cover UTF-8 text documents under configured projection mounts. Rename or move support is desirable but should not block the first dogfooding release.
+For the current release line, the manifest only needs to cover UTF-8 text documents under configured projection mounts. Rename or move support is desirable but should not block the first dogfooding release.
 
 Recommended manifest row shape:
 
@@ -230,13 +230,13 @@ Each event should record:
 - operation summary
 - optional message or note
 
-For v0, CLI-readable events are sufficient. A polished UI or narrative history can wait.
+For the current release line, CLI-readable events are sufficient. A polished UI or narrative history can wait.
 
 The exception is restore selection. Picking a restoration point confidently is not a good flags-only workflow, so `projector restore` should use a terminal browser at the edge layer while still delegating history reads and restore writes to the server/runtime boundaries.
 
 This is the out-of-band channel for understanding who changed what and why without collapsing disagreements into git issues.
 
-Live presence is intentionally omitted from v0. In an agentic workflow, "open files" and cursor-style awareness are not central product needs, and basic sync plus provenance should stand on their own.
+Live presence is intentionally omitted from the current release line. In an agentic workflow, "open files" and cursor-style awareness are not central product needs, and basic sync plus provenance should stand on their own.
 
 ## Local sync daemon
 
@@ -255,7 +255,7 @@ Its local intake should be event-driven first, with slower filesystem polling an
 
 The daemon should treat `_project/` as a materialized projection, not the authoritative store.
 
-For v0, the daemon should be optimized for boring correctness:
+For the current release line, the daemon should be optimized for boring correctness:
 
 - survive reconnects
 - avoid file write loops
@@ -340,7 +340,7 @@ The repo-local sync-entry state should be durable enough that one-shot recovery,
 
 The server side should stay boring and explicit.
 
-For single-user v0, boring also means operationally boring:
+For the current single-user release line, boring also means operationally boring:
 
 - one authoritative server profile per path-scoped sync entry rather than a pretend local-only authority
 - one machine can know about multiple server profiles globally
@@ -403,14 +403,14 @@ The outer store boundary should stay split too:
 - `PROJECTOR.SERVER.FILE_STORE`: file-backed store adapter
 - `PROJECTOR.SERVER.POSTGRES_STORE`: Postgres store adapter and migration bootstrap
 
-For v0, the right default is SQLite, not a specialized CRDT database.
+For the current release line, the right default is SQLite, not a specialized CRDT database.
 
 Use SQLite for the normal single-user BYO path, ideally inside a sysbox-backed container:
 
 - one database file
 - easy remote deployment
 - easy backup and copy
-- transactional enough for v0 manifest, history, restore, and sync-entry discovery
+- transactional enough for the current manifest, history, restore, and sync-entry discovery needs
 
 And within that SQLite backend, the code should stay split by responsibility rather than collapsing into one storage blob:
 
@@ -493,7 +493,7 @@ That is acceptable for phase 1 as long as convergence is reliable.
 
 ### Operational preference
 
-Prefer reliable convergence over clever local UX in v0.
+Prefer reliable convergence over clever local UX in the current release line.
 
 That means it is acceptable if:
 
@@ -548,7 +548,7 @@ It is not:
 - plain UTF-8 text files
 - basic provenance log
 
-Phase 1 should be treated as the dogfooding v0 release, not just a research milestone.
+Phase 1 should be treated as the dogfooding release, not just a research milestone.
 
 ### Phase 2
 

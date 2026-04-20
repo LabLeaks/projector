@@ -3,7 +3,7 @@
 Projector materializes synced private context under one or more configured repo-local gitignored projection mounts rather than a hardcoded repo root.
 
 @spec PROJECTOR.WORKSPACE.TEXT_ONLY
-v0 materializes only UTF-8 text files and directories under the configured projection mounts.
+projector materializes only UTF-8 text files and directories under the configured projection mounts.
 
 @spec PROJECTOR.SYNC.TEXT_CONVERGENCE
 UTF-8 text files under the configured projection mounts converge across synced checkouts for the same workspace without conflict-marker rewrites on concurrent overlap.
