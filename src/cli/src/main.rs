@@ -26,6 +26,14 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
+        Some("help") | Some("--help") | Some("-h") => {
+            cli_support::print_usage();
+            Ok(())
+        }
+        Some("--version") | Some("-V") => {
+            cli_support::print_version();
+            Ok(())
+        }
         Some("sync") => daemon_cli::run_sync_command(args.collect()),
         Some("connect") => connection_cli::run_connect(args.collect()),
         Some("disconnect") => connection_cli::run_disconnect(args.collect()),

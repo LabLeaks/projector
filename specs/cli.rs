@@ -1,4 +1,16 @@
 /**
+@group PROJECTOR.CLI.HELP
+Top-level usage surface for the projector CLI.
+
+@spec PROJECTOR.CLI.HELP.RENDERS_TOP_LEVEL_USAGE
+`projector help`, `projector --help`, and `projector -h` render the top-level usage surface without requiring a repo or server.
+
+@group PROJECTOR.CLI.VERSION
+Top-level version-reporting surface for the projector CLI.
+
+@spec PROJECTOR.CLI.VERSION.REPORTS_RELEASE_VERSION
+`projector --version` and `projector -V` print the released projector CLI version.
+
 @spec PROJECTOR.CLI.SYNC.MANAGES_MACHINE_DAEMON_PROCESS
 `projector sync start`, `projector sync status`, and `projector sync stop` manage and report the machine-global projector daemon process through machine-global projector state instead of doubling as repo-local bind commands.
 

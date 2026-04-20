@@ -5,6 +5,37 @@ Status, log, and daemon-management proof for local runtime behavior under local 
 // @fileimplements PROJECTOR.TESTS.OBSERVABILITY_CLI
 use super::*;
 
+// @verifies PROJECTOR.CLI.HELP.RENDERS_TOP_LEVEL_USAGE
+#[test]
+fn top_level_help_renders_usage() {
+    let repo = temp_repo("top-level-help");
+
+    let long_help = run_projector(&repo, &["--help"]);
+    assert!(long_help.contains("Usage: projector <"));
+    assert!(long_help.contains("|compact <repo-relative-path>"));
+
+    let help_command = run_projector(&repo, &["help"]);
+    assert_eq!(help_command, long_help);
+
+    let short_help = run_projector(&repo, &["-h"]);
+    assert_eq!(short_help, long_help);
+}
+
+// @verifies PROJECTOR.CLI.VERSION.REPORTS_RELEASE_VERSION
+#[test]
+fn top_level_version_reports_release_version() {
+    let repo = temp_repo("top-level-version");
+
+    let long_version = run_projector(&repo, &["--version"]);
+    assert_eq!(
+        long_version.trim(),
+        format!("projector {}", env!("CARGO_PKG_VERSION"))
+    );
+
+    let short_version = run_projector(&repo, &["-V"]);
+    assert_eq!(short_version, long_version);
+}
+
 // @verifies PROJECTOR.CLI.SYNC.MANAGES_MACHINE_DAEMON_PROCESS
 #[test]
 fn sync_start_status_and_stop_manage_machine_daemon() {

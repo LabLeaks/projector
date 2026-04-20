@@ -15,6 +15,10 @@ pub(crate) fn print_usage() {
     );
 }
 
+pub(crate) fn print_version() {
+    println!("projector {}", env!("CARGO_PKG_VERSION"));
+}
+
 pub(crate) fn repo_root() -> Result<PathBuf, Box<dyn Error>> {
     let cwd = env::current_dir()?;
     Ok(discover_repo_root(&cwd))
