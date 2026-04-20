@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1
+
+`0.2.1` is a small patch release on top of the new `0.2.x` baseline.
+
+### Highlights
+
+- Added explicit top-level help handling for `projector help`, `projector --help`, and `projector -h`.
+- Added explicit version reporting for `projector --version` and `projector -V`.
+- Kept the release/install smoke surface honest after the first public `0.2.0` cut.
+
 ## 0.2.0
 
 `0.2.0` is the first real public release after initial dogfood. It turns `projector` from durable private file sync into a serious private shared-context system for repo-local text.

@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "projector-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "crossterm",
  "libc",
@@ -1403,14 +1403,14 @@ dependencies = [
 
 [[package]]
 name = "projector-domain"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "projector-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libc",
  "notify",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "projector-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "axum",
