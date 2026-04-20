@@ -3,6 +3,8 @@
 Owns shared retained-history record types and insert helpers while delegating file-backed and Postgres-backed history adapters to narrower backend modules.
 */
 // @fileimplements PROJECTOR.SERVER.HISTORY
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 use super::StoreError;
@@ -11,7 +13,9 @@ use super::body_state::{
     RetainedBodyHistoryPayload,
 };
 use super::history_surgery::build_redaction_preview_lines;
-use projector_domain::{DocumentBodyRedactionMatch, DocumentBodyRevision};
+use projector_domain::{
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentPathEventKind,
+};
 
 pub(crate) use super::history_file::*;
 pub(crate) use super::history_postgres::*;
@@ -133,7 +137,7 @@ impl FileBodyRevision {
             actor_id: self.actor_id.clone(),
             document_id: self.document_id.clone(),
             checkpoint_anchor_seq: self.checkpoint_anchor_seq,
-            history_kind: self.history_kind.as_str().to_owned(),
+            history_kind: self.history_kind.into(),
             occurrences: self.base_text.matches(exact_text).count()
                 + self
                     .retained_history()
@@ -158,6 +162,12 @@ pub(crate) struct FilePathRevision {
     pub deleted: bool,
     pub event_kind: String,
     pub timestamp_ms: u128,
+}
+
+pub(crate) fn parse_public_path_event_kind(
+    raw: &str,
+) -> Result<DocumentPathEventKind, StoreError> {
+    DocumentPathEventKind::from_str(raw).map_err(StoreError::new)
 }
 
 pub(crate) fn effective_workspace_cursor(seq: u64, workspace_cursor: u64) -> u64 {

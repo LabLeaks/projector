@@ -77,7 +77,7 @@ pub(crate) fn retained_purge_matches(
             actor_id: revision.actor_id,
             document_id: revision.document_id,
             checkpoint_anchor_seq: revision.checkpoint_anchor_seq,
-            history_kind: revision.history_kind.as_str().to_owned(),
+            history_kind: revision.history_kind.into(),
             body_len: revision.body_text.len(),
             timestamp_ms: revision.timestamp_ms,
         })

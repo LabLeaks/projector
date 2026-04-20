@@ -6,13 +6,17 @@ Fake transport implementations for local-bootstrap sync recovery and retry proof
 use super::*;
 
 pub(crate) fn default_compaction_policy_response()
--> (HistoryCompactionPolicy, String, Option<String>) {
+-> (
+    HistoryCompactionPolicy,
+    HistoryCompactionPolicySourceKind,
+    Option<String>,
+) {
     (
         HistoryCompactionPolicy {
             revisions: 100,
             frequency: 10,
         },
-        "default".to_owned(),
+        HistoryCompactionPolicySourceKind::Default,
         None,
     )
 }
@@ -186,7 +190,14 @@ impl Transport for RejectCreateTransport {
         &mut self,
         _binding: &dyn SyncContext,
         _repo_relative_path: &Path,
-    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+    ) -> Result<
+        (
+            HistoryCompactionPolicy,
+            HistoryCompactionPolicySourceKind,
+            Option<String>,
+        ),
+        Self::Error,
+    > {
         Ok(default_compaction_policy_response())
     }
 
@@ -406,7 +417,14 @@ impl Transport for RetryAfterRebootstrapTransport {
         &mut self,
         _binding: &dyn SyncContext,
         _repo_relative_path: &Path,
-    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+    ) -> Result<
+        (
+            HistoryCompactionPolicy,
+            HistoryCompactionPolicySourceKind,
+            Option<String>,
+        ),
+        Self::Error,
+    > {
         Ok(default_compaction_policy_response())
     }
 
@@ -624,7 +642,14 @@ impl Transport for RetryImmediatelyTransport {
         &mut self,
         _binding: &dyn SyncContext,
         _repo_relative_path: &Path,
-    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+    ) -> Result<
+        (
+            HistoryCompactionPolicy,
+            HistoryCompactionPolicySourceKind,
+            Option<String>,
+        ),
+        Self::Error,
+    > {
         Ok(default_compaction_policy_response())
     }
 

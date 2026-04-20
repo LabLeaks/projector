@@ -4,6 +4,7 @@ Defines typed sync payloads for bootstrap, delta reads, document lifecycle write
 */
 // @fileimplements PROJECTOR.DOMAIN.WIRE
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::{
     DocumentId, HistoryCompactionPolicy, ManifestState, ProvenanceEvent, SyncEntryKind,
@@ -83,10 +84,47 @@ pub struct GetHistoryCompactionPolicyRequest {
     pub repo_relative_path: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryCompactionPolicySourceKind {
+    Default,
+    PathOverride,
+    AncestorOverride,
+}
+
+impl HistoryCompactionPolicySourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::PathOverride => "path_override",
+            Self::AncestorOverride => "ancestor_override",
+        }
+    }
+}
+
+impl std::str::FromStr for HistoryCompactionPolicySourceKind {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "default" => Ok(Self::Default),
+            "path_override" => Ok(Self::PathOverride),
+            "ancestor_override" => Ok(Self::AncestorOverride),
+            other => Err(format!("unknown history compaction policy source kind {other}")),
+        }
+    }
+}
+
+impl fmt::Display for HistoryCompactionPolicySourceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GetHistoryCompactionPolicyResponse {
     pub policy: HistoryCompactionPolicy,
-    pub source_kind: String,
+    pub source_kind: HistoryCompactionPolicySourceKind,
     pub source_path: Option<String>,
 }
 
@@ -152,18 +190,101 @@ pub struct ListEventsResponse {
     pub events: Vec<ProvenanceEvent>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentBodyHistoryKind {
+    FullTextRevisionV1,
+    FullTextCheckpointV1,
+    YrsTextCheckpointV1,
+    YrsTextUpdateV1,
+}
+
+impl DocumentBodyHistoryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FullTextRevisionV1 => "full_text_revision_v1",
+            Self::FullTextCheckpointV1 => "full_text_checkpoint_v1",
+            Self::YrsTextCheckpointV1 => "yrs_text_checkpoint_v1",
+            Self::YrsTextUpdateV1 => "yrs_text_update_v1",
+        }
+    }
+}
+
+impl std::str::FromStr for DocumentBodyHistoryKind {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "full_text_revision_v1" => Ok(Self::FullTextRevisionV1),
+            "full_text_checkpoint_v1" => Ok(Self::FullTextCheckpointV1),
+            "yrs_text_checkpoint_v1" => Ok(Self::YrsTextCheckpointV1),
+            "yrs_text_update_v1" => Ok(Self::YrsTextUpdateV1),
+            other => Err(format!("unknown document body history kind {other}")),
+        }
+    }
+}
+
+impl fmt::Display for DocumentBodyHistoryKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DocumentBodyRevision {
     pub seq: u64,
     pub actor_id: String,
     pub document_id: String,
     pub checkpoint_anchor_seq: Option<u64>,
-    pub history_kind: String,
+    pub history_kind: DocumentBodyHistoryKind,
     pub base_text: String,
     pub body_text: String,
     pub diff_lines: Vec<String>,
     pub conflicted: bool,
     pub timestamp_ms: u128,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentPathEventKind {
+    DocumentCreated,
+    DocumentMoved,
+    DocumentDeleted,
+    DocumentRestored,
+    WorkspaceRestored,
+}
+
+impl DocumentPathEventKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DocumentCreated => "document_created",
+            Self::DocumentMoved => "document_moved",
+            Self::DocumentDeleted => "document_deleted",
+            Self::DocumentRestored => "document_restored",
+            Self::WorkspaceRestored => "workspace_restored",
+        }
+    }
+}
+
+impl std::str::FromStr for DocumentPathEventKind {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "document_created" => Ok(Self::DocumentCreated),
+            "document_moved" => Ok(Self::DocumentMoved),
+            "document_deleted" => Ok(Self::DocumentDeleted),
+            "document_restored" => Ok(Self::DocumentRestored),
+            "workspace_restored" => Ok(Self::WorkspaceRestored),
+            other => Err(format!("unknown document path event kind {other}")),
+        }
+    }
+}
+
+impl fmt::Display for DocumentPathEventKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -174,7 +295,7 @@ pub struct DocumentPathRevision {
     pub mount_path: String,
     pub relative_path: String,
     pub deleted: bool,
-    pub event_kind: String,
+    pub event_kind: DocumentPathEventKind,
     pub timestamp_ms: u128,
 }
 
@@ -196,7 +317,7 @@ pub struct DocumentBodyRedactionMatch {
     pub actor_id: String,
     pub document_id: String,
     pub checkpoint_anchor_seq: Option<u64>,
-    pub history_kind: String,
+    pub history_kind: DocumentBodyHistoryKind,
     pub occurrences: usize,
     pub preview_lines: Vec<String>,
     pub timestamp_ms: u128,
@@ -221,7 +342,7 @@ pub struct DocumentBodyPurgeMatch {
     pub actor_id: String,
     pub document_id: String,
     pub checkpoint_anchor_seq: Option<u64>,
-    pub history_kind: String,
+    pub history_kind: DocumentBodyHistoryKind,
     pub body_len: usize,
     pub timestamp_ms: u128,
 }

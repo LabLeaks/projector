@@ -71,8 +71,8 @@ pub(crate) fn set_history_compaction_policy_raw(
     addr: &str,
     workspace_id: &str,
     repo_relative_path: &str,
-    revisions: usize,
-    frequency: usize,
+    revisions: u32,
+    frequency: u32,
 ) -> reqwest::blocking::Response {
     reqwest::blocking::Client::new()
         .post(format!("http://{addr}/history/compact/set"))

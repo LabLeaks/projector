@@ -11,7 +11,9 @@ use projector_domain::{
 use rusqlite::{Connection, params};
 
 use super::super::super::StoreError;
-pub(super) use super::super::super::history::{FileBodyRevision, FilePathRevision};
+pub(super) use super::super::super::history::{
+    FileBodyRevision, FilePathRevision, parse_public_path_event_kind,
+};
 use super::super::super::history_surgery::{retained_purge_matches, retained_redaction_matches};
 use super::super::state::{decode_json, effective_workspace_cursor};
 
@@ -100,17 +102,19 @@ pub(crate) fn list_path_revisions(
     let mut revisions = read_path_history(connection, workspace_id)?
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
-        .map(|revision| DocumentPathRevision {
-            seq: revision.seq,
-            actor_id: revision.actor_id,
-            document_id: revision.document_id,
-            mount_path: revision.mount_path,
-            relative_path: revision.relative_path,
-            deleted: revision.deleted,
-            event_kind: revision.event_kind,
-            timestamp_ms: revision.timestamp_ms,
+        .map(|revision| -> Result<DocumentPathRevision, StoreError> {
+            Ok(DocumentPathRevision {
+                seq: revision.seq,
+                actor_id: revision.actor_id,
+                document_id: revision.document_id,
+                mount_path: revision.mount_path,
+                relative_path: revision.relative_path,
+                deleted: revision.deleted,
+                event_kind: parse_public_path_event_kind(&revision.event_kind)?,
+                timestamp_ms: revision.timestamp_ms,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     if revisions.len() > limit {
         revisions = revisions.split_off(revisions.len() - limit);
     }

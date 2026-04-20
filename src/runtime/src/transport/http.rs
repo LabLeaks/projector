@@ -479,7 +479,14 @@ impl Transport for HttpTransport {
         &mut self,
         binding: &dyn SyncContext,
         repo_relative_path: &Path,
-    ) -> Result<(HistoryCompactionPolicy, String, Option<String>), Self::Error> {
+    ) -> Result<
+        (
+            HistoryCompactionPolicy,
+            projector_domain::HistoryCompactionPolicySourceKind,
+            Option<String>,
+        ),
+        Self::Error,
+    > {
         let response = self
             .client
             .post(format!("{}/history/compact/get", self.base_url))

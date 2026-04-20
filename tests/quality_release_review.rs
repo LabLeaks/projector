@@ -123,7 +123,26 @@ fn release_review_validator_accepts_valid_payload_shape() {
 
     let schema = release_review_schema();
     assert_eq!(schema["type"], "object");
-    assert!(schema["properties"]["warnings"].is_object());
+    assert_eq!(
+        schema["required"],
+        json!(["baseline", "full_scan", "summary", "warnings"])
+    );
+    assert_eq!(
+        schema["properties"]["warnings"]["items"]["required"],
+        json!([
+            "id",
+            "category",
+            "severity",
+            "title",
+            "why_it_matters",
+            "evidence",
+            "recommendation"
+        ])
+    );
+    assert_eq!(
+        schema["properties"]["warnings"]["items"]["properties"]["evidence"]["items"]["required"],
+        json!(["path", "line", "detail"])
+    );
 }
 
 #[test]
@@ -346,6 +365,24 @@ fn release_review_merge_output_is_stable_across_response_order() {
                     "recommendation": "Keep ids stable."
                 }]
             }
+        ],
+        [
+            "cli_surfaces",
+            2,
+            {
+                "baseline": "v0.2.0",
+                "full_scan": false,
+                "summary": "warn",
+                "warnings": [{
+                    "id": "chunk-two",
+                    "category": "correctness",
+                    "severity": "warn",
+                    "title": "Another warning",
+                    "why_it_matters": "Ordering should not affect merge output.",
+                    "evidence": [{"path": "src/cli/src/main.rs", "line": 2, "detail": "anchor"}],
+                    "recommendation": "Preserve deterministic merge order."
+                }]
+            }
         ]
     ]);
 
@@ -416,6 +453,23 @@ fn release_review_exits_successfully_when_codex_returns_warnings() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be valid json");
+    assert!(payload["baseline"].is_null());
+    assert_eq!(payload["full_scan"], true);
+    assert!(
+        payload["summary"]
+            .as_str()
+            .expect("summary should be string")
+            .contains("1 warn-level issue"),
+        "summary:\n{}",
+        payload["summary"]
+    );
+    let warnings = payload["warnings"].as_array().expect("warnings should be array");
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["category"], "maintainability");
+    assert_eq!(warnings[0]["severity"], "warn");
+    assert_eq!(warnings[0]["title"], "Example warning");
 }
 
 #[test]

@@ -7,7 +7,9 @@ Owns the internal canonical-body-state and retained-body-history abstractions so
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use projector_domain::{BootstrapSnapshot, DocumentBody, DocumentBodyRevision, DocumentId};
+use projector_domain::{
+    BootstrapSnapshot, DocumentBody, DocumentBodyHistoryKind, DocumentBodyRevision, DocumentId,
+};
 use serde::{Deserialize, Serialize};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
@@ -326,6 +328,17 @@ impl RetainedBodyHistoryKind {
     }
 }
 
+impl From<RetainedBodyHistoryKind> for DocumentBodyHistoryKind {
+    fn from(value: RetainedBodyHistoryKind) -> Self {
+        match value {
+            RetainedBodyHistoryKind::FullTextRevisionV1 => Self::FullTextRevisionV1,
+            RetainedBodyHistoryKind::FullTextCheckpointV1 => Self::FullTextCheckpointV1,
+            RetainedBodyHistoryKind::YrsTextCheckpointV1 => Self::YrsTextCheckpointV1,
+            RetainedBodyHistoryKind::YrsTextUpdateV1 => Self::YrsTextUpdateV1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RetainedBodyHistoryPayload {
     kind: RetainedBodyHistoryKind,
@@ -484,7 +497,7 @@ impl RetainedBodyHistoryPayload {
             actor_id,
             document_id,
             checkpoint_anchor_seq,
-            history_kind: history_kind.as_str().to_owned(),
+            history_kind: history_kind.into(),
             base_text: self.base_text.clone(),
             body_text: self.materialized_text.clone(),
             diff_lines: render_snapshot_diff_lines(&self.base_text, &self.materialized_text),

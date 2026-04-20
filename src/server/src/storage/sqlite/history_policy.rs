@@ -18,8 +18,8 @@ use super::super::super::history_compaction::{
 use super::super::state::{encode_json, load_required_workspace_state};
 use super::revisions::read_body_revisions;
 
-fn decode_nonzero_policy_component(raw: i64, field: &str) -> Result<usize, StoreError> {
-    let value = usize::try_from(raw)
+fn decode_nonzero_policy_component(raw: i64, field: &str) -> Result<u32, StoreError> {
+    let value = u32::try_from(raw)
         .map_err(|_| StoreError::new(format!("history compaction {field} must be non-negative")))?;
     if value == 0 {
         return Err(StoreError::new(format!(
@@ -91,8 +91,8 @@ pub(crate) fn set_history_compaction_policy(
         params![
             request.workspace_id,
             normalized_path.display().to_string(),
-            request.policy.revisions as i64,
-            request.policy.frequency as i64,
+            i64::from(request.policy.revisions),
+            i64::from(request.policy.frequency),
         ],
     )?;
     Ok(())

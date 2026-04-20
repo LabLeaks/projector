@@ -112,11 +112,17 @@ fn server_lists_document_body_revisions() {
 
     let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions.len(), 2);
-    assert_eq!(revisions[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        revisions[0].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert_eq!(revisions[0].checkpoint_anchor_seq, Some(1));
     assert_eq!(revisions[0].base_text, "");
     assert_eq!(revisions[0].body_text, "<p>created revision</p>\n");
-    assert_eq!(revisions[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        revisions[1].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert_eq!(revisions[1].checkpoint_anchor_seq, Some(2));
     assert_eq!(revisions[1].base_text, "<p>created revision</p>\n");
     assert_eq!(revisions[1].body_text, "<p>updated revision</p>\n");
@@ -261,8 +267,14 @@ fn server_can_redact_exact_text_in_retained_document_body_history() {
 
     let revisions_after = list_body_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions_after.len(), 2);
-    assert_eq!(revisions_after[0].history_kind, "yrs_text_checkpoint_v1");
-    assert_eq!(revisions_after[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        revisions_after[0].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
+    assert_eq!(
+        revisions_after[1].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert!(revisions_after.iter().all(|revision| {
         !revision.base_text.contains(secret)
             && !revision.body_text.contains(secret)
@@ -341,8 +353,14 @@ fn server_lists_retained_redaction_matches_with_preview_lines() {
 
     let matches = preview_redact_body_history(&addr, &workspace_id, &document_id, secret, 10);
     assert_eq!(matches.len(), 2);
-    assert_eq!(matches[0].history_kind, "yrs_text_checkpoint_v1");
-    assert_eq!(matches[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        matches[0].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
+    assert_eq!(
+        matches[1].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert!(matches.iter().all(|entry| entry.occurrences >= 1));
     assert!(matches.iter().all(|entry| {
         entry.preview_lines.iter().any(|line| line.contains(secret))
@@ -547,8 +565,14 @@ fn server_lists_retained_purge_matches() {
 
     let matches = preview_purge_body_history(&addr, &workspace_id, &document_id, 10);
     assert_eq!(matches.len(), 2);
-    assert_eq!(matches[0].history_kind, "yrs_text_checkpoint_v1");
-    assert_eq!(matches[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        matches[0].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
+    assert_eq!(
+        matches[1].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert!(matches.iter().all(|entry| entry.body_len > 0));
 }
 
@@ -785,13 +809,13 @@ fn server_lists_document_path_revisions() {
 
     let revisions = list_path_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions.len(), 3);
-    assert_eq!(revisions[0].event_kind, "document_created");
+    assert_eq!(revisions[0].event_kind, DocumentPathEventKind::DocumentCreated);
     assert_eq!(revisions[0].mount_path, "private");
     assert_eq!(revisions[0].relative_path, "briefs/path-history-list.html");
-    assert_eq!(revisions[1].event_kind, "document_moved");
+    assert_eq!(revisions[1].event_kind, DocumentPathEventKind::DocumentMoved);
     assert_eq!(revisions[1].mount_path, "notes");
     assert_eq!(revisions[1].relative_path, "archive/path-history-list.html");
-    assert_eq!(revisions[2].event_kind, "document_deleted");
+    assert_eq!(revisions[2].event_kind, DocumentPathEventKind::DocumentDeleted);
     assert!(revisions[2].deleted);
 }
 

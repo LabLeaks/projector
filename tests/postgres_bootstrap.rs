@@ -726,11 +726,17 @@ fn postgres_server_lists_document_body_revisions() {
 
     let revisions = list_body_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions.len(), 2);
-    assert_eq!(revisions[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        revisions[0].history_kind,
+        projector_domain::DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert_eq!(revisions[0].checkpoint_anchor_seq, Some(1));
     assert_eq!(revisions[0].base_text, "");
     assert_eq!(revisions[0].body_text, "<p>created revision</p>\n");
-    assert_eq!(revisions[1].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        revisions[1].history_kind,
+        projector_domain::DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert_eq!(revisions[1].checkpoint_anchor_seq, Some(2));
     assert_eq!(revisions[1].base_text, "<p>created revision</p>\n");
     assert_eq!(revisions[1].body_text, "<p>updated revision</p>\n");
@@ -846,13 +852,22 @@ fn postgres_server_lists_document_path_revisions() {
 
     let revisions = list_path_revisions(&addr, &workspace_id, &document_id, 10);
     assert_eq!(revisions.len(), 3);
-    assert_eq!(revisions[0].event_kind, "document_created");
+    assert_eq!(
+        revisions[0].event_kind,
+        projector_domain::DocumentPathEventKind::DocumentCreated
+    );
     assert_eq!(revisions[0].mount_path, "private");
     assert_eq!(revisions[0].relative_path, "briefs/path-history-list.html");
-    assert_eq!(revisions[1].event_kind, "document_moved");
+    assert_eq!(
+        revisions[1].event_kind,
+        projector_domain::DocumentPathEventKind::DocumentMoved
+    );
     assert_eq!(revisions[1].mount_path, "notes");
     assert_eq!(revisions[1].relative_path, "archive/path-history-list.html");
-    assert_eq!(revisions[2].event_kind, "document_deleted");
+    assert_eq!(
+        revisions[2].event_kind,
+        projector_domain::DocumentPathEventKind::DocumentDeleted
+    );
     assert!(revisions[2].deleted);
 }
 
@@ -1003,7 +1018,7 @@ fn postgres_server_restore_revives_deleted_document_at_last_path() {
             .last()
             .expect("latest path revision")
             .event_kind,
-        "document_restored"
+        projector_domain::DocumentPathEventKind::DocumentRestored
     );
 }
 

@@ -17,8 +17,8 @@ pub enum SyncEntryKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct HistoryCompactionPolicy {
-    pub revisions: usize,
-    pub frequency: usize,
+    pub revisions: u32,
+    pub frequency: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

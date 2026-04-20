@@ -259,7 +259,10 @@ fn server_enforces_history_compaction_policy_on_retained_body_history() {
     assert_eq!(retained_seqs.first().copied(), Some(1));
     assert_eq!(retained_seqs.last(), Some(&6));
     assert!(retained_seqs.contains(&5));
-    assert_eq!(revisions[0].history_kind, "yrs_text_checkpoint_v1");
+    assert_eq!(
+        revisions[0].history_kind,
+        DocumentBodyHistoryKind::YrsTextCheckpointV1
+    );
     assert_eq!(
         revisions
             .last()
@@ -341,6 +344,9 @@ fn server_normalizes_compaction_policy_paths() {
         .expect("decode compaction policy response");
     assert_eq!(policy.policy.revisions, 7);
     assert_eq!(policy.policy.frequency, 3);
-    assert_eq!(policy.source_kind, "path_override");
+    assert_eq!(
+        policy.source_kind,
+        HistoryCompactionPolicySourceKind::PathOverride
+    );
     assert_eq!(policy.source_path.as_deref(), Some("private/notes/today.html"));
 }

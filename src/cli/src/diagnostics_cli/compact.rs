@@ -17,8 +17,8 @@ use crate::sync_entry_cli::{
 
 struct CompactArgs {
     repo_relative_path: PathBuf,
-    revisions: Option<usize>,
-    frequency: Option<usize>,
+    revisions: Option<u32>,
+    frequency: Option<u32>,
     inherit: bool,
 }
 
@@ -81,7 +81,7 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
                 revisions = Some(
                     args.get(idx)
                         .ok_or("missing value after --revisions")?
-                        .parse::<usize>()?,
+                        .parse::<u32>()?,
                 );
             }
             "--frequency" => {
@@ -89,7 +89,7 @@ fn parse_compact_args(args: &[String]) -> Result<CompactArgs, Box<dyn Error>> {
                 frequency = Some(
                     args.get(idx)
                         .ok_or("missing value after --frequency")?
-                        .parse::<usize>()?,
+                        .parse::<u32>()?,
                 );
             }
             "--inherit" => inherit = true,

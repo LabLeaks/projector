@@ -23,6 +23,7 @@ use super::body_projection::snapshot_from_manifest_entries;
 use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL};
 use super::history::{
     FileBodyRevision, FilePathRevision, current_time_ms, effective_workspace_cursor,
+    parse_public_path_event_kind,
 };
 use super::history_compaction::{
     StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
@@ -431,17 +432,19 @@ pub(crate) fn file_list_path_revisions(
     let mut revisions = file_read_path_history(state_dir, workspace_id)?
         .into_iter()
         .filter(|revision| revision.document_id == document_id)
-        .map(|revision| DocumentPathRevision {
-            seq: revision.seq,
-            actor_id: revision.actor_id,
-            document_id: revision.document_id,
-            mount_path: revision.mount_path,
-            relative_path: revision.relative_path,
-            deleted: revision.deleted,
-            event_kind: revision.event_kind,
-            timestamp_ms: revision.timestamp_ms,
+        .map(|revision| -> Result<DocumentPathRevision, StoreError> {
+            Ok(DocumentPathRevision {
+                seq: revision.seq,
+                actor_id: revision.actor_id,
+                document_id: revision.document_id,
+                mount_path: revision.mount_path,
+                relative_path: revision.relative_path,
+                deleted: revision.deleted,
+                event_kind: parse_public_path_event_kind(&revision.event_kind)?,
+                timestamp_ms: revision.timestamp_ms,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     if revisions.len() > limit {
         revisions = revisions.split_off(revisions.len() - limit);
     }

@@ -16,11 +16,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use projector_domain::{
     ActorId, ApiErrorResponse, BootstrapSnapshot, CheckoutBinding, DocumentBody,
-    DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
-    DocumentKind, DocumentPathRevision, GetHistoryCompactionPolicyRequest,
-    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy, ListBodyRevisionsRequest,
-    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
-    ListPathRevisionsResponse, ManifestEntry, ManifestState,
+    DocumentBodyHistoryKind, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch,
+    DocumentBodyRevision, DocumentId, DocumentKind, DocumentPathEventKind,
+    DocumentPathRevision, GetHistoryCompactionPolicyRequest,
+    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy,
+    HistoryCompactionPolicySourceKind, ListBodyRevisionsRequest, ListBodyRevisionsResponse,
+    ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
+    ManifestEntry, ManifestState,
     PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
     PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
     ProjectionRoots, ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,

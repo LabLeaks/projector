@@ -20,7 +20,7 @@ use super::StoreError;
 use super::body_persistence::{AsyncBodyPersistence, PostgresBodyPersistence};
 use super::body_projection::{snapshot_from_current_rows, snapshot_from_manifest_entries};
 use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL, RetainedBodyHistoryKind};
-use super::history::{FileBodyRevision, insert_path_revision_tx};
+use super::history::{FileBodyRevision, insert_path_revision_tx, parse_public_path_event_kind};
 use super::history_compaction::{
     StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
     history_compaction_response, normalize_history_compaction_path, replay_body_revision_run,
@@ -48,16 +48,33 @@ async fn postgres_read_history_compaction_policies(
             &[&workspace_id],
         )
         .await?;
-    Ok(rows
-        .into_iter()
-        .map(|row| StoredHistoryCompactionPolicyOverride {
-            repo_relative_path: PathBuf::from(row.get::<_, String>("repo_relative_path")),
-            policy: HistoryCompactionPolicy {
-                revisions: row.get::<_, i32>("revisions") as usize,
-                frequency: row.get::<_, i32>("frequency") as usize,
-            },
+    rows.into_iter()
+        .map(|row| {
+            let revisions = u32::try_from(row.get::<_, i32>("revisions")).map_err(|_| {
+                StoreError::new("history compaction revisions must be non-negative")
+            })?;
+            let frequency = u32::try_from(row.get::<_, i32>("frequency")).map_err(|_| {
+                StoreError::new("history compaction frequency must be non-negative")
+            })?;
+            if revisions == 0 {
+                return Err(StoreError::new(
+                    "history compaction revisions must be at least 1",
+                ));
+            }
+            if frequency == 0 {
+                return Err(StoreError::new(
+                    "history compaction frequency must be at least 1",
+                ));
+            }
+            Ok(StoredHistoryCompactionPolicyOverride {
+                repo_relative_path: PathBuf::from(row.get::<_, String>("repo_relative_path")),
+                policy: HistoryCompactionPolicy {
+                    revisions,
+                    frequency,
+                },
+            })
         })
-        .collect())
+        .collect()
 }
 
 pub(crate) async fn postgres_get_history_compaction_policy(
@@ -78,6 +95,10 @@ pub(crate) async fn postgres_set_history_compaction_policy(
 ) -> Result<(), StoreError> {
     validate_history_compaction_policy(&request.policy)?;
     let normalized_path = normalize_history_compaction_path(&request.repo_relative_path)?;
+    let revisions = i32::try_from(request.policy.revisions)
+        .map_err(|_| StoreError::new("history compaction revisions exceeded postgres range"))?;
+    let frequency = i32::try_from(request.policy.frequency)
+        .map_err(|_| StoreError::new("history compaction frequency exceeded postgres range"))?;
     transaction
         .execute(
             "insert into history_compaction_policies (workspace_id, repo_relative_path, revisions, frequency) \
@@ -88,8 +109,8 @@ pub(crate) async fn postgres_set_history_compaction_policy(
             &[
                 &request.workspace_id,
                 &normalized_path.display().to_string(),
-                &(request.policy.revisions as i32),
-                &(request.policy.frequency as i32),
+                &revisions,
+                &frequency,
             ],
         )
         .await?;
@@ -550,17 +571,19 @@ pub(crate) async fn postgres_list_path_revisions(
         .await?;
     let mut revisions = rows
         .into_iter()
-        .map(|row| DocumentPathRevision {
-            seq: row.get::<_, i64>("seq") as u64,
-            actor_id: row.get::<_, String>("actor_id"),
-            document_id: row.get::<_, String>("document_id"),
-            mount_path: row.get::<_, String>("mount_path"),
-            relative_path: row.get::<_, String>("relative_path"),
-            deleted: row.get::<_, bool>("deleted"),
-            event_kind: row.get::<_, String>("event_kind"),
-            timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+        .map(|row| {
+            Ok(DocumentPathRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                actor_id: row.get::<_, String>("actor_id"),
+                document_id: row.get::<_, String>("document_id"),
+                mount_path: row.get::<_, String>("mount_path"),
+                relative_path: row.get::<_, String>("relative_path"),
+                deleted: row.get::<_, bool>("deleted"),
+                event_kind: parse_public_path_event_kind(&row.get::<_, String>("event_kind"))?,
+                timestamp_ms: row.get::<_, i64>("timestamp_ms") as u128,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, StoreError>>()?;
     revisions.reverse();
     Ok(revisions)
 }

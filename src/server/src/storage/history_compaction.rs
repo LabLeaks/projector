@@ -6,7 +6,10 @@ Owns retained-history policy resolution, checkpoint compaction, and checkpoint-p
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
-use projector_domain::{GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy};
+use projector_domain::{
+    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy,
+    HistoryCompactionPolicySourceKind,
+};
 use serde::{Deserialize, Serialize};
 
 use super::StoreError;
@@ -15,8 +18,8 @@ use super::body_state::{
 };
 use crate::storage::history::FileBodyRevision;
 
-const DEFAULT_HISTORY_COMPACTION_REVISIONS: usize = 100;
-const DEFAULT_HISTORY_COMPACTION_FREQUENCY: usize = 10;
+const DEFAULT_HISTORY_COMPACTION_REVISIONS: u32 = 100;
+const DEFAULT_HISTORY_COMPACTION_FREQUENCY: u32 = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StoredHistoryCompactionPolicyOverride {
@@ -27,7 +30,7 @@ pub(crate) struct StoredHistoryCompactionPolicyOverride {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ResolvedHistoryCompactionPolicy {
     pub(crate) policy: HistoryCompactionPolicy,
-    pub(crate) source_kind: &'static str,
+    pub(crate) source_kind: HistoryCompactionPolicySourceKind,
     pub(crate) source_path: Option<PathBuf>,
 }
 
@@ -119,9 +122,9 @@ pub(crate) fn resolve_history_compaction_policy(
             return ResolvedHistoryCompactionPolicy {
                 policy: override_entry.policy.clone(),
                 source_kind: if path == repo_relative_path {
-                    "path_override"
+                    HistoryCompactionPolicySourceKind::PathOverride
                 } else {
-                    "ancestor_override"
+                    HistoryCompactionPolicySourceKind::AncestorOverride
                 },
                 source_path: Some(path.to_path_buf()),
             };
@@ -133,7 +136,7 @@ pub(crate) fn resolve_history_compaction_policy(
 
     ResolvedHistoryCompactionPolicy {
         policy: default_history_compaction_policy(),
-        source_kind: "default",
+        source_kind: HistoryCompactionPolicySourceKind::Default,
         source_path: None,
     }
 }
@@ -145,7 +148,7 @@ pub(crate) fn history_compaction_response(
     let resolved = resolve_history_compaction_policy(overrides, repo_relative_path);
     GetHistoryCompactionPolicyResponse {
         policy: resolved.policy,
-        source_kind: resolved.source_kind.to_owned(),
+        source_kind: resolved.source_kind,
         source_path: resolved.source_path.map(|path| path.display().to_string()),
     }
 }
@@ -209,22 +212,26 @@ pub(crate) fn compact_document_body_revisions(
     document_id: &str,
     policy: &HistoryCompactionPolicy,
 ) -> Result<Vec<FileBodyRevision>, StoreError> {
+    let revisions_to_keep = usize::try_from(policy.revisions)
+        .map_err(|_| StoreError::new("history compaction revisions exceeded supported size"))?;
+    let frequency = usize::try_from(policy.frequency)
+        .map_err(|_| StoreError::new("history compaction frequency exceeded supported size"))?;
     let document_revisions = revisions
         .iter()
         .filter(|revision| revision.document_id == document_id)
         .cloned()
         .collect::<Vec<_>>();
-    if document_revisions.len() <= policy.revisions {
+    if document_revisions.len() <= revisions_to_keep {
         return Ok(document_revisions);
     }
 
-    let older_len = document_revisions.len() - policy.revisions;
+    let older_len = document_revisions.len() - revisions_to_keep;
     let replayed = replay_document_revision_states(document_revisions);
     let mut compacted = Vec::new();
     let mut previous_kept_text = None::<String>;
 
     for (index, (revision, state)) in replayed.into_iter().enumerate() {
-        let keep = index >= older_len || index % policy.frequency == 0;
+        let keep = index >= older_len || index % frequency == 0;
         if !keep {
             continue;
         }

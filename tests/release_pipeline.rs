@@ -7,6 +7,7 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -249,6 +250,15 @@ fn base64_encode(input: &str) -> String {
 fn release_assets() -> Value {
     serde_json::from_str(include_str!("../scripts/release-assets.json"))
         .expect("release assets json should be valid")
+}
+
+fn asset_name_set(values: &Value) -> BTreeSet<String> {
+    values
+        .as_array()
+        .expect("asset values should be an array")
+        .iter()
+        .map(|value| value.as_str().expect("asset name should be string").to_owned())
+        .collect()
 }
 
 fn valid_release_assets_json() -> String {
@@ -579,25 +589,45 @@ fn github_release_workflow_is_committed() {
 // @verifies PROJECTOR.DISTRIBUTION.GITHUB_RELEASES.ASSET_MANIFEST
 fn release_assets_manifest_covers_cli_server_and_homebrew_subset() {
     let assets = release_assets();
-    let github_assets = assets["github_release_assets"]
-        .as_array()
-        .expect("github assets should be array");
-    assert!(
-        github_assets
-            .iter()
-            .any(|value| value.as_str() == Some("projector-cli-x86_64-apple-darwin.tar.xz"))
+    assert_eq!(
+        asset_name_set(&assets["github_release_assets"]),
+        BTreeSet::from([
+            "dist-manifest.json".to_owned(),
+            "projector-cli-aarch64-apple-darwin.tar.xz".to_owned(),
+            "projector-cli-aarch64-apple-darwin.tar.xz.sha256".to_owned(),
+            "projector-cli-aarch64-unknown-linux-gnu.tar.xz".to_owned(),
+            "projector-cli-aarch64-unknown-linux-gnu.tar.xz.sha256".to_owned(),
+            "projector-cli-x86_64-apple-darwin.tar.xz".to_owned(),
+            "projector-cli-x86_64-apple-darwin.tar.xz.sha256".to_owned(),
+            "projector-cli-x86_64-pc-windows-msvc.zip".to_owned(),
+            "projector-cli-x86_64-pc-windows-msvc.zip.sha256".to_owned(),
+            "projector-cli-x86_64-unknown-linux-gnu.tar.xz".to_owned(),
+            "projector-cli-x86_64-unknown-linux-gnu.tar.xz.sha256".to_owned(),
+            "projector-server-aarch64-apple-darwin.tar.xz".to_owned(),
+            "projector-server-aarch64-apple-darwin.tar.xz.sha256".to_owned(),
+            "projector-server-aarch64-unknown-linux-gnu.tar.xz".to_owned(),
+            "projector-server-aarch64-unknown-linux-gnu.tar.xz.sha256".to_owned(),
+            "projector-server-x86_64-apple-darwin.tar.xz".to_owned(),
+            "projector-server-x86_64-apple-darwin.tar.xz.sha256".to_owned(),
+            "projector-server-x86_64-pc-windows-msvc.zip".to_owned(),
+            "projector-server-x86_64-pc-windows-msvc.zip.sha256".to_owned(),
+            "projector-server-x86_64-unknown-linux-gnu.tar.xz".to_owned(),
+            "projector-server-x86_64-unknown-linux-gnu.tar.xz.sha256".to_owned(),
+            "sha256.sum".to_owned(),
+            "source.tar.gz".to_owned(),
+            "source.tar.gz.sha256".to_owned(),
+        ])
     );
-    assert!(github_assets.iter().any(|value| value.as_str() == Some("projector-server-x86_64-unknown-linux-gnu.tar.xz")));
 
-    let homebrew_assets = assets["homebrew_formula_archives"]
-        .as_array()
-        .expect("homebrew assets should be array");
-    assert!(homebrew_assets.iter().all(|value| {
-        value
-            .as_str()
-            .expect("homebrew asset name")
-            .starts_with("projector-cli-")
-    }));
+    assert_eq!(
+        asset_name_set(&assets["homebrew_formula_archives"]),
+        BTreeSet::from([
+            "projector-cli-aarch64-apple-darwin.tar.xz".to_owned(),
+            "projector-cli-aarch64-unknown-linux-gnu.tar.xz".to_owned(),
+            "projector-cli-x86_64-apple-darwin.tar.xz".to_owned(),
+            "projector-cli-x86_64-unknown-linux-gnu.tar.xz".to_owned(),
+        ])
+    );
 }
 
 #[test]
@@ -614,6 +644,58 @@ fn github_release_verifier_accepts_expected_asset_set() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn github_release_verifier_rejects_missing_or_unexpected_assets() {
+    let mut release: Value =
+        serde_json::from_str(&valid_release_assets_json()).expect("release json should be valid");
+    let assets = release["assets"]
+        .as_array_mut()
+        .expect("assets should be mutable array");
+    assets.retain(|asset| asset["name"] != "projector-server-x86_64-unknown-linux-gnu.tar.xz");
+    assets.push(serde_json::json!({
+        "name": "unexpected-extra.tar.xz",
+        "digest": format!("sha256:{:064x}", 99)
+    }));
+
+    let output = run_script_with_fake_gh(
+        "scripts/verify-github-release-published.sh",
+        &release.to_string(),
+        None,
+    );
+    assert!(!output.status.success(), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release assets did not match expected set"), "stderr:\n{stderr}");
+    assert!(stderr.contains("projector-server-x86_64-unknown-linux-gnu.tar.xz"), "stderr:\n{stderr}");
+    assert!(stderr.contains("unexpected-extra.tar.xz"), "stderr:\n{stderr}");
+}
+
+#[test]
+fn github_release_verifier_rejects_missing_digest_and_wrong_tag() {
+    let mut release: Value =
+        serde_json::from_str(&valid_release_assets_json()).expect("release json should be valid");
+    release["tagName"] = Value::String("v9.9.9".to_owned());
+    let assets = release["assets"]
+        .as_array_mut()
+        .expect("assets should be mutable array");
+    let cli_asset = assets
+        .iter_mut()
+        .find(|asset| asset["name"] == "projector-cli-x86_64-apple-darwin.tar.xz")
+        .expect("cli asset should exist");
+    cli_asset
+        .as_object_mut()
+        .expect("asset should be object")
+        .remove("digest");
+
+    let output = run_script_with_fake_gh(
+        "scripts/verify-github-release-published.sh",
+        &release.to_string(),
+        None,
+    );
+    assert!(!output.status.success(), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release tag mismatch"), "stderr:\n{stderr}");
 }
 
 #[test]
@@ -635,5 +717,31 @@ fn homebrew_formula_verifier_accepts_expected_projector_formula_shape() {
         "stdout:\n{}\n\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn homebrew_formula_verifier_rejects_wrong_formula_selector_entry() {
+    let version = current_workspace_version();
+    let invalid_formula = valid_formula_for_release(&version).replace(
+        "projector-cli-x86_64-unknown-linux-gnu.tar.xz",
+        "projector-cli-x86_64-unknown-linux-musl.tar.xz",
+    );
+    let output = run_script_with_fake_gh(
+        "scripts/verify-homebrew-formula.sh",
+        &serde_json::json!({
+            "assets": serde_json::from_str::<Value>(&valid_release_assets_json())
+                .expect("release json should be valid")["assets"]
+                .clone()
+        })
+        .to_string(),
+        Some(&invalid_formula),
+    );
+    assert!(!output.status.success(), "stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("formula is missing archive selector entry")
+            || stderr.contains("formula checksum selector entry does not contain expected checksum"),
+        "stderr:\n{stderr}"
     );
 }

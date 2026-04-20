@@ -393,7 +393,7 @@ fn server_restore_revives_deleted_document_at_last_path() {
             .last()
             .expect("latest path revision")
             .event_kind,
-        "document_restored"
+        DocumentPathEventKind::DocumentRestored
     );
 }
 

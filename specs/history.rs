@@ -39,10 +39,10 @@ Projector resolves the effective history compaction policy for one file from the
 Projector can rewrite one document's retained body history by repo-relative path to replace exact matched text with `[REDACTED]` while preserving the document's readable retained history.
 
 @spec PROJECTOR.HISTORY.DOCUMENT_HISTORY_PURGE
-Projector can purge one document's retained historical body content by path while leaving the surrounding document history and path history intact.
+Projector can purge one document's retained historical body content by path while leaving the surrounding retained document-body history rows intact.
 
 @spec PROJECTOR.HISTORY.DESTRUCTIVE_HISTORY_AUDIT
-Projector records destructive document-history surgery without retaining the removed sensitive content in its audit trail.
+Projector records destructive document-history surgery as explicit audit events in its audit trail.
 
 @spec PROJECTOR.SERVER.HISTORY.LISTS_DOCUMENT_BODY_REVISIONS
 `POST /history/body/list` returns append-only body revisions for a document with base text, resulting body text, conflict metadata, and self-describing retained-history kind and checkpoint-anchor metadata.
@@ -84,10 +84,10 @@ Projector records destructive document-history surgery without retaining the rem
 `POST /history/body/purge` can require the exact retained revision seq set returned by a prior purge preview and rejects the purge if the clearable retained revision set has changed since that preview.
 
 @spec PROJECTOR.SERVER.HISTORY.PURGES_DOCUMENT_RETAINED_BODY_HISTORY
-`POST /history/body/purge` can purge one document's retained historical body content for a document id while leaving surrounding document history and path history rows intact.
+`POST /history/body/purge` can purge one document's retained historical body content for a document id while leaving surrounding retained document-body history rows intact.
 
 @spec PROJECTOR.SERVER.HISTORY.RECORDS_DESTRUCTIVE_HISTORY_SURGERY
-`POST /history/body/purge` records destructive document-history surgery without retaining the removed historical body content in the audit record.
+`POST /history/body/redact|purge` records destructive document-history surgery in the audit record.
 
 @spec PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
 Server history storage enforces the effective path-scoped history compaction policy during retained body-history writes by keeping dense recent body history and rewriting older retained history as sparser checkpoints.
@@ -96,5 +96,5 @@ Server history storage enforces the effective path-scoped history compaction pol
 `POST /history/compact/set` rejects invalid compaction policy values such as zero revisions or zero frequency.
 
 @spec PROJECTOR.SERVER.HISTORY.NORMALIZES_COMPACTION_POLICY_PATHS
-`POST /history/compact/get|set|clear` resolves compaction policy overrides by normalized repo-relative path rather than raw path spelling.
+`POST /history/compact/get|set` resolves compaction policy overrides by normalized repo-relative path rather than raw path spelling.
 */
