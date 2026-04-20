@@ -15,9 +15,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use projector_domain::{
-    ActorId, BootstrapSnapshot, CheckoutBinding, DocumentBody, DocumentBodyPurgeMatch,
-    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId, DocumentKind,
-    DocumentPathRevision, HistoryCompactionPolicy, ListBodyRevisionsRequest,
+    ActorId, ApiErrorResponse, BootstrapSnapshot, CheckoutBinding, DocumentBody,
+    DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
+    DocumentKind, DocumentPathRevision, GetHistoryCompactionPolicyRequest,
+    GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy, ListBodyRevisionsRequest,
     ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
     ListPathRevisionsResponse, ManifestEntry, ManifestState,
     PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
@@ -25,7 +26,8 @@ use projector_domain::{
     ProjectionRoots, ProvenanceEvent, ProvenanceEventKind, PurgeDocumentBodyHistoryRequest,
     ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
     RepoSyncConfig, RepoSyncEntry, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
-    RestoreWorkspaceRequest, SyncContext, SyncEntryKind, WorkspaceId,
+    RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest, SyncContext, SyncEntryKind,
+    WorkspaceId,
 };
 use projector_runtime::{
     BindingStore, FileBindingStore, FileMachineSyncRegistryStore, FileProvenanceLog,
@@ -77,8 +79,9 @@ use fake_transport::{
 };
 use legacy_sync::run_legacy_sync_with_env;
 use server_api::{
-    list_body_revisions, list_events, list_path_revisions, preview_purge_body_history,
-    preview_redact_body_history, purge_body_history, purge_body_history_failure,
-    reconstruct_workspace_at_cursor, redact_body_history, redact_body_history_failure,
-    resolve_document_by_historical_path, restore_workspace_at_cursor, seed_remote_sync_entry,
+    get_history_compaction_policy_raw, list_body_revisions, list_events, list_path_revisions,
+    preview_purge_body_history, preview_redact_body_history, purge_body_history,
+    purge_body_history_failure, reconstruct_workspace_at_cursor, redact_body_history,
+    redact_body_history_failure, resolve_document_by_historical_path,
+    restore_workspace_at_cursor, seed_remote_sync_entry, set_history_compaction_policy_raw,
 };

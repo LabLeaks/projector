@@ -85,7 +85,7 @@ def invoke_codex(
     if mocked and os.environ.get(MOCK_ALLOW_ENV) == "1":
         try:
             return validate_response_shape(json.loads(mocked))
-        except (json.JSONDecodeError, SystemExit) as err:
+        except (json.JSONDecodeError, SystemExit, TypeError, AttributeError) as err:
             raise CodexInvocationError(f"mocked review output was invalid: {err}") from err
 
     result = subprocess.run(
@@ -109,5 +109,5 @@ def invoke_codex(
 
     try:
         return validate_response_shape(json.loads(result.stdout))
-    except (json.JSONDecodeError, SystemExit) as err:
+    except (json.JSONDecodeError, SystemExit, TypeError, AttributeError) as err:
         raise CodexInvocationError(f"codex returned invalid structured output: {err}") from err

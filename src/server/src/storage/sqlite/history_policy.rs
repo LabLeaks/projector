@@ -12,7 +12,8 @@ use rusqlite::{Connection, params};
 use super::super::super::StoreError;
 use super::super::super::history_compaction::{
     StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
-    history_compaction_response, resolve_history_compaction_policy,
+    history_compaction_response, normalize_history_compaction_path,
+    resolve_history_compaction_policy, validate_history_compaction_policy,
 };
 use super::super::state::{encode_json, load_required_workspace_state};
 use super::revisions::read_body_revisions;
@@ -45,9 +46,10 @@ pub(crate) fn get_history_compaction_policy(
     workspace_id: &str,
     repo_relative_path: &str,
 ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+    let normalized_path = normalize_history_compaction_path(repo_relative_path)?;
     Ok(history_compaction_response(
         &read_history_compaction_policies(connection, workspace_id)?,
-        std::path::Path::new(repo_relative_path),
+        &normalized_path,
     ))
 }
 
@@ -55,6 +57,8 @@ pub(crate) fn set_history_compaction_policy(
     connection: &rusqlite::Transaction<'_>,
     request: &SetHistoryCompactionPolicyRequest,
 ) -> Result<(), StoreError> {
+    validate_history_compaction_policy(&request.policy)?;
+    let normalized_path = normalize_history_compaction_path(&request.repo_relative_path)?;
     connection.execute(
         "insert into history_compaction_policies (workspace_id, repo_relative_path, revisions, frequency) \
          values (?1, ?2, ?3, ?4) \
@@ -63,7 +67,7 @@ pub(crate) fn set_history_compaction_policy(
            frequency = excluded.frequency",
         params![
             request.workspace_id,
-            request.repo_relative_path,
+            normalized_path.display().to_string(),
             request.policy.revisions as i64,
             request.policy.frequency as i64,
         ],
@@ -75,9 +79,10 @@ pub(crate) fn clear_history_compaction_policy(
     connection: &rusqlite::Transaction<'_>,
     request: &ClearHistoryCompactionPolicyRequest,
 ) -> Result<bool, StoreError> {
+    let normalized_path = normalize_history_compaction_path(&request.repo_relative_path)?;
     Ok(connection.execute(
         "delete from history_compaction_policies where workspace_id = ?1 and repo_relative_path = ?2",
-        params![request.workspace_id, request.repo_relative_path],
+        params![request.workspace_id, normalized_path.display().to_string()],
     )? > 0)
 }
 

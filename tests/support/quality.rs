@@ -292,6 +292,45 @@ pub fn release_review_validate_response_shape_err(payload: &str) -> String {
     String::from_utf8(output.stderr).expect("stderr should be utf-8")
 }
 
+pub fn release_review_validate_response_shape_nonjson_value_err(payload: &str) -> String {
+    let script = r#"
+import importlib.util
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+payload = json.loads(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "release_review", root / "scripts" / "review-projector-release-style.py"
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+try:
+    validated = module.validate_response_shape(payload)
+    print(json.dumps(validated))
+except SystemExit as err:
+    print(str(err), file=sys.stderr)
+    raise
+"#;
+
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(script)
+        .arg(repo_root())
+        .arg(payload)
+        .current_dir(repo_root())
+        .output()
+        .expect("non-object response validation helper should run");
+    assert!(
+        !output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stderr).expect("stderr should be utf-8")
+}
+
 pub fn python_entrypoint_runtime_flag(script_name: &str) -> Value {
     let script_path = repo_root().join("scripts").join(script_name);
     let script = r#"

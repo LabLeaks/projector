@@ -4,7 +4,7 @@ Owns Postgres-backed retained-history storage, preview, compaction-policy persis
 */
 // @fileimplements PROJECTOR.SERVER.POSTGRES_HISTORY
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use projector_domain::{
     BootstrapSnapshot, ClearHistoryCompactionPolicyRequest, DocumentBodyPurgeMatch,
@@ -23,7 +23,8 @@ use super::body_state::{BodyStateModel, FULL_TEXT_BODY_MODEL, RetainedBodyHistor
 use super::history::{FileBodyRevision, insert_path_revision_tx};
 use super::history_compaction::{
     StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
-    history_compaction_response, replay_body_revision_run, resolve_history_compaction_policy,
+    history_compaction_response, normalize_history_compaction_path, replay_body_revision_run,
+    resolve_history_compaction_policy, validate_history_compaction_policy,
 };
 use super::history_restore::{
     build_restored_live_workspace_snapshot, diff_workspace_restore_changes,
@@ -64,9 +65,10 @@ pub(crate) async fn postgres_get_history_compaction_policy(
     workspace_id: &str,
     repo_relative_path: &str,
 ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+    let normalized_path = normalize_history_compaction_path(repo_relative_path)?;
     Ok(history_compaction_response(
         &postgres_read_history_compaction_policies(client, workspace_id).await?,
-        Path::new(repo_relative_path),
+        &normalized_path,
     ))
 }
 
@@ -74,6 +76,8 @@ pub(crate) async fn postgres_set_history_compaction_policy(
     transaction: &tokio_postgres::Transaction<'_>,
     request: &SetHistoryCompactionPolicyRequest,
 ) -> Result<(), StoreError> {
+    validate_history_compaction_policy(&request.policy)?;
+    let normalized_path = normalize_history_compaction_path(&request.repo_relative_path)?;
     transaction
         .execute(
             "insert into history_compaction_policies (workspace_id, repo_relative_path, revisions, frequency) \
@@ -83,7 +87,7 @@ pub(crate) async fn postgres_set_history_compaction_policy(
                frequency = excluded.frequency",
             &[
                 &request.workspace_id,
-                &request.repo_relative_path,
+                &normalized_path.display().to_string(),
                 &(request.policy.revisions as i32),
                 &(request.policy.frequency as i32),
             ],
@@ -96,11 +100,12 @@ pub(crate) async fn postgres_clear_history_compaction_policy(
     transaction: &tokio_postgres::Transaction<'_>,
     request: &ClearHistoryCompactionPolicyRequest,
 ) -> Result<bool, StoreError> {
+    let normalized_path = normalize_history_compaction_path(&request.repo_relative_path)?;
     let removed = transaction
         .execute(
             "delete from history_compaction_policies \
              where workspace_id = $1 and repo_relative_path = $2",
-            &[&request.workspace_id, &request.repo_relative_path],
+            &[&request.workspace_id, &normalized_path.display().to_string()],
         )
         .await?;
     Ok(removed > 0)

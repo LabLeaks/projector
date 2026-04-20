@@ -52,6 +52,42 @@ pub(crate) fn list_body_revisions(
         .revisions
 }
 
+pub(crate) fn get_history_compaction_policy_raw(
+    addr: &str,
+    workspace_id: &str,
+    repo_relative_path: &str,
+) -> reqwest::blocking::Response {
+    reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/history/compact/get"))
+        .json(&GetHistoryCompactionPolicyRequest {
+            workspace_id: workspace_id.to_owned(),
+            repo_relative_path: repo_relative_path.to_owned(),
+        })
+        .send()
+        .expect("send history compaction get request")
+}
+
+pub(crate) fn set_history_compaction_policy_raw(
+    addr: &str,
+    workspace_id: &str,
+    repo_relative_path: &str,
+    revisions: usize,
+    frequency: usize,
+) -> reqwest::blocking::Response {
+    reqwest::blocking::Client::new()
+        .post(format!("http://{addr}/history/compact/set"))
+        .json(&SetHistoryCompactionPolicyRequest {
+            workspace_id: workspace_id.to_owned(),
+            repo_relative_path: repo_relative_path.to_owned(),
+            policy: HistoryCompactionPolicy {
+                revisions,
+                frequency,
+            },
+        })
+        .send()
+        .expect("send history compaction set request")
+}
+
 pub(crate) fn preview_redact_body_history(
     addr: &str,
     workspace_id: &str,

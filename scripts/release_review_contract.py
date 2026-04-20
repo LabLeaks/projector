@@ -56,6 +56,8 @@ ALLOWED_WARNING_CATEGORIES = {
 
 
 def validate_review_payload(payload: dict, *, subject: str) -> dict:
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{subject} must be an object")
     extra = payload.keys() - ALLOWED_TOP_LEVEL_KEYS
     if extra:
         raise SystemExit(f"{subject} has unexpected keys: {sorted(extra)}")
@@ -132,6 +134,8 @@ def validate_review_payload(payload: dict, *, subject: str) -> dict:
 
 
 def validate_review_preview(payload: dict, *, subject: str) -> dict:
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{subject} must be an object")
     extra = payload.keys() - ALLOWED_PREVIEW_TOP_LEVEL_KEYS
     if extra:
         raise SystemExit(f"{subject} has unexpected keys: {sorted(extra)}")

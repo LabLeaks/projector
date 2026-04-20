@@ -5,7 +5,7 @@ Owns file-backed retained-history storage, preview, compaction-policy persistenc
 // @fileimplements PROJECTOR.SERVER.FILE_HISTORY
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use projector_domain::{
     BootstrapSnapshot, ClearHistoryCompactionPolicyRequest, DocumentBodyPurgeMatch,
@@ -26,7 +26,8 @@ use super::history::{
 };
 use super::history_compaction::{
     StoredHistoryCompactionPolicyOverride, compact_document_body_revisions,
-    history_compaction_response, replay_body_revision_run, resolve_history_compaction_policy,
+    history_compaction_response, normalize_history_compaction_path, replay_body_revision_run,
+    resolve_history_compaction_policy, validate_history_compaction_policy,
 };
 use super::history_restore::{
     build_restored_live_workspace_snapshot, diff_workspace_restore_changes,
@@ -127,9 +128,10 @@ pub(crate) fn file_get_history_compaction_policy(
     workspace_id: &str,
     repo_relative_path: &str,
 ) -> Result<GetHistoryCompactionPolicyResponse, StoreError> {
+    let normalized_path = normalize_history_compaction_path(repo_relative_path)?;
     Ok(history_compaction_response(
         &file_read_history_compaction_policies(state_dir, workspace_id)?,
-        Path::new(repo_relative_path),
+        &normalized_path,
     ))
 }
 
@@ -137,8 +139,9 @@ pub(crate) fn file_set_history_compaction_policy(
     state_dir: &Path,
     request: &SetHistoryCompactionPolicyRequest,
 ) -> Result<(), StoreError> {
+    validate_history_compaction_policy(&request.policy)?;
     let mut overrides = file_read_history_compaction_policies(state_dir, &request.workspace_id)?;
-    let repo_relative_path = PathBuf::from(&request.repo_relative_path);
+    let repo_relative_path = normalize_history_compaction_path(&request.repo_relative_path)?;
     if let Some(existing) = overrides
         .iter_mut()
         .find(|entry| entry.repo_relative_path == repo_relative_path)
@@ -158,9 +161,10 @@ pub(crate) fn file_clear_history_compaction_policy(
     state_dir: &Path,
     request: &ClearHistoryCompactionPolicyRequest,
 ) -> Result<bool, StoreError> {
+    let normalized_path = normalize_history_compaction_path(&request.repo_relative_path)?;
     let mut overrides = file_read_history_compaction_policies(state_dir, &request.workspace_id)?;
     let original_len = overrides.len();
-    overrides.retain(|entry| entry.repo_relative_path != Path::new(&request.repo_relative_path));
+    overrides.retain(|entry| entry.repo_relative_path != normalized_path);
     let removed = overrides.len() != original_len;
     if removed {
         file_write_history_compaction_policies(state_dir, &request.workspace_id, &overrides)?;

@@ -261,7 +261,7 @@ def main() -> int:
                     f"review chunk {chunk['name']}#{chunk['chunk_index']} failed: {error}"
                 )
                 continue
-            except Exception as error:
+            except BaseException as error:
                 runner_warnings.append(
                     f"review chunk {chunk['name']}#{chunk['chunk_index']} crashed: {error}"
                 )
@@ -269,6 +269,7 @@ def main() -> int:
             responses.append((str(chunk["name"]), int(chunk["chunk_index"]), response))
 
     responses.sort(key=lambda item: (item[0], item[1]))
+    runner_warnings.sort()
     payload = merge_pass_responses(base, args.full, responses, runner_warnings)
     for warning in runner_warnings:
         print(warning, file=sys.stderr)

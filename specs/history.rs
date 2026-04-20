@@ -91,4 +91,10 @@ Projector records destructive document-history surgery without retaining the rem
 
 @spec PROJECTOR.SERVER.HISTORY.ENFORCES_COMPACTION_POLICY
 Server history storage enforces the effective path-scoped history compaction policy during retained body-history writes by keeping dense recent body history and rewriting older retained history as sparser checkpoints.
+
+@spec PROJECTOR.SERVER.HISTORY.REJECTS_INVALID_COMPACTION_POLICY
+`POST /history/compact/set` rejects invalid compaction policy values such as zero revisions or zero frequency.
+
+@spec PROJECTOR.SERVER.HISTORY.NORMALIZES_COMPACTION_POLICY_PATHS
+`POST /history/compact/get|set|clear` resolves compaction policy overrides by normalized repo-relative path rather than raw path spelling.
 */

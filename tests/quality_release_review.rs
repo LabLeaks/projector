@@ -80,6 +80,7 @@ use support::{
     release_review_chunk_helper, release_review_dry_run, release_review_extract_context_ranges,
     release_review_extract_full_scan_context_ranges, release_review_merge_responses,
     release_review_passes_for, release_review_schema, release_review_validate_response_shape_err,
+    release_review_validate_response_shape_nonjson_value_err,
     release_review_validate_response_shape_ok, repo_root, workflow_files,
 };
 
@@ -138,6 +139,13 @@ fn release_review_validator_rejects_schema_drift() {
         }"#,
     );
     assert!(stderr.contains("unexpected keys"), "stderr:\n{}", stderr);
+}
+
+#[test]
+// @verifies PROJECTOR.QUALITY.RELEASE_REVIEW.STRUCTURED_OUTPUT
+fn release_review_validator_rejects_non_object_payload() {
+    let stderr = release_review_validate_response_shape_nonjson_value_err(r#"[1, 2, 3]"#);
+    assert!(stderr.contains("must be an object"), "stderr:\n{}", stderr);
 }
 
 #[test]

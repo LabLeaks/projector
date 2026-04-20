@@ -268,3 +268,79 @@ fn server_enforces_history_compaction_policy_on_retained_body_history() {
         "<p>revision six</p>\n"
     );
 }
+
+// @verifies PROJECTOR.SERVER.HISTORY.REJECTS_INVALID_COMPACTION_POLICY
+#[test]
+fn server_rejects_zero_valued_compaction_policy() {
+    let repo = temp_repo("server-history-compaction-invalid-policy");
+    fs::write(repo.join(".gitignore"), "private/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private"]);
+
+    let sync_config = FileRepoSyncConfigStore::new(&repo)
+        .load()
+        .expect("load sync config");
+    let workspace_id = sync_config
+        .entries
+        .first()
+        .expect("sync entry exists")
+        .workspace_id
+        .clone();
+
+    let response =
+        set_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private", 0, 1);
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let error = response
+        .json::<ApiErrorResponse>()
+        .expect("decode invalid revisions response");
+    assert!(error.message.contains("revisions must be at least 1"));
+
+    let response =
+        set_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private", 1, 0);
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let error = response
+        .json::<ApiErrorResponse>()
+        .expect("decode invalid frequency response");
+    assert!(error.message.contains("frequency must be at least 1"));
+}
+
+// @verifies PROJECTOR.SERVER.HISTORY.NORMALIZES_COMPACTION_POLICY_PATHS
+#[test]
+fn server_normalizes_compaction_policy_paths() {
+    let repo = temp_repo("server-history-compaction-normalized-path");
+    fs::write(repo.join(".gitignore"), "private/\nnotes/\n").expect("write gitignore");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    run_projector(&repo, &["sync", "--server", &addr, "private", "notes"]);
+
+    let sync_config = FileRepoSyncConfigStore::new(&repo)
+        .load()
+        .expect("load sync config");
+    let workspace_id = sync_config
+        .entries
+        .first()
+        .expect("sync entry exists")
+        .workspace_id
+        .clone();
+
+    let response = set_history_compaction_policy_raw(
+        &addr,
+        workspace_id.as_str(),
+        "./private/notes/../notes/today.html",
+        7,
+        3,
+    );
+    assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+
+    let response =
+        get_history_compaction_policy_raw(&addr, workspace_id.as_str(), "private/notes/today.html");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let policy = response
+        .json::<GetHistoryCompactionPolicyResponse>()
+        .expect("decode compaction policy response");
+    assert_eq!(policy.policy.revisions, 7);
+    assert_eq!(policy.policy.frequency, 3);
+    assert_eq!(policy.source_kind, "path_override");
+    assert_eq!(policy.source_path.as_deref(), Some("private/notes/today.html"));
+}

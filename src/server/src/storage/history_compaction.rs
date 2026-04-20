@@ -4,7 +4,7 @@ Owns retained-history policy resolution, checkpoint compaction, and checkpoint-p
 */
 // @fileimplements PROJECTOR.SERVER.HISTORY_COMPACTION
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use projector_domain::{GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,74 @@ fn default_history_compaction_policy() -> HistoryCompactionPolicy {
         revisions: DEFAULT_HISTORY_COMPACTION_REVISIONS,
         frequency: DEFAULT_HISTORY_COMPACTION_FREQUENCY,
     }
+}
+
+pub(crate) fn validate_history_compaction_policy(
+    policy: &HistoryCompactionPolicy,
+) -> Result<(), StoreError> {
+    if policy.revisions == 0 {
+        return Err(StoreError::new(
+            "history compaction revisions must be at least 1",
+        ));
+    }
+    if policy.frequency == 0 {
+        return Err(StoreError::new(
+            "history compaction frequency must be at least 1",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn normalize_history_compaction_path(raw: &str) -> Result<PathBuf, StoreError> {
+    let path = Path::new(raw);
+    if path.as_os_str().is_empty() {
+        return Err(StoreError::new(
+            "history compaction path must not be empty",
+        ));
+    }
+    if path.is_absolute() {
+        return Err(StoreError::new(
+            "history compaction path must be repo-relative, not absolute",
+        ));
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => {
+                if part == ".projector" {
+                    return Err(StoreError::new(
+                        "history compaction path must not live inside .projector",
+                    ));
+                }
+                normalized.push(part);
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(StoreError::new(
+                        "history compaction path must not escape the repo root",
+                    ));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(StoreError::new("history compaction path must be repo-relative"));
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        return Err(StoreError::new(
+            "history compaction path must contain at least one normal path segment",
+        ));
+    }
+    if normalized == Path::new(".projector") || normalized.starts_with(".projector") {
+        return Err(StoreError::new(
+            "history compaction path must not live inside .projector",
+        ));
+    }
+
+    Ok(normalized)
 }
 
 pub(crate) fn resolve_history_compaction_policy(
