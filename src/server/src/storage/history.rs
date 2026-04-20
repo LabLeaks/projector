@@ -229,9 +229,9 @@ pub(crate) async fn insert_path_revision_tx(
     Ok(())
 }
 
-pub(crate) fn current_time_ms() -> u128 {
+pub(crate) fn current_time_ms() -> Result<u128, StoreError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
-        .unwrap_or(0)
+        .map_err(|err| StoreError::new(format!("current time before unix epoch: {err}")))
 }

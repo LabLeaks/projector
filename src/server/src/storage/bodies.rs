@@ -80,7 +80,7 @@ pub(crate) fn file_update_document(
         &request.text,
     );
 
-    body_persistence.write_current_state(&mut snapshot, &document_id, merge.canonical_state());
+    body_persistence.write_current_state(&mut snapshot, &document_id, merge.canonical_state())?;
     let Some(entry) = snapshot
         .manifest
         .entries
@@ -198,7 +198,7 @@ pub(crate) fn file_restore_document_body_revision(
         } else {
             fallback_target_state
         };
-    body_persistence.write_current_state(&mut snapshot, &document_id, &target_state);
+    body_persistence.write_current_state(&mut snapshot, &document_id, &target_state)?;
 
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
     let event_cursor =
@@ -418,8 +418,8 @@ pub(crate) async fn postgres_restore_document_body_revision(
         .map(|row| {
             let history_kind =
                 RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
-                    .expect("stored retained body history kind should parse");
-            super::history::FileBodyRevision {
+                    .map_err(StoreError::new)?;
+            Ok(super::history::FileBodyRevision {
                 seq: row.get::<_, i64>("seq") as u64,
                 workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
                 actor_id: String::new(),
@@ -432,12 +432,17 @@ pub(crate) async fn postgres_restore_document_body_revision(
                 body_text: row.get::<_, String>("body_text"),
                 conflicted: row.get::<_, bool>("conflicted"),
                 timestamp_ms: 0,
-            }
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, StoreError>>()?;
     let fallback_target_state = target_revisions
         .last()
-        .expect("target rows should contain requested revision")
+        .ok_or_else(|| {
+            StoreError::new(format!(
+                "document {} has no body revision {}",
+                request.document_id, request.seq
+            ))
+        })?
         .materialized_body_state();
     let replayed_target_state = replay_body_revision_run(target_revisions.into_iter())
         .remove(request.document_id.as_str())

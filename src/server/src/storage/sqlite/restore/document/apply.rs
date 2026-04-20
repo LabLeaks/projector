@@ -42,7 +42,7 @@ pub(super) fn apply_document_restore(
         &mut resolution.state.snapshot,
         &resolution.document_id,
         &target_state,
-    );
+    )?;
 
     let event = make_event(
         &mut resolution.state,

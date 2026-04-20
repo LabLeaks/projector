@@ -61,7 +61,7 @@ pub(crate) fn file_create_document(
     });
     let body_persistence = FileBodyPersistence::new(state_dir, &request.workspace_id);
     let initial_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone());
-    body_persistence.write_current_state(&mut snapshot, &document_id, &initial_state);
+    body_persistence.write_current_state(&mut snapshot, &document_id, &initial_state)?;
     file_persist_workspace_snapshot(state_dir, &request.workspace_id, &snapshot)?;
     let event_cursor = file_workspace_cursor(state_dir, &request.workspace_id)? + 1;
     file_append_workspace_event(

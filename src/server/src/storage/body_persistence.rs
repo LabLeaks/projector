@@ -42,8 +42,9 @@ pub(crate) trait SnapshotBodyPersistence {
         snapshot: &mut BootstrapSnapshot,
         document_id: &DocumentId,
         state: &CanonicalBodyState,
-    ) {
+    ) -> Result<(), StoreError> {
         upsert_body_state(snapshot, document_id, state);
+        Ok(())
     }
 
     fn append_retained_history(
@@ -125,7 +126,7 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
         snapshot: &mut BootstrapSnapshot,
         document_id: &DocumentId,
         state: &CanonicalBodyState,
-    ) {
+    ) -> Result<(), StoreError> {
         upsert_body_state(snapshot, document_id, state);
         let mut states = self.read_current_states().unwrap_or_default();
         if let Some(existing) = states
@@ -142,7 +143,6 @@ impl SnapshotBodyPersistence for FileBodyPersistence<'_> {
             });
         }
         self.write_current_states(&states)
-            .expect("file canonical body states should persist");
     }
 
     fn append_retained_history(
@@ -220,7 +220,7 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
         snapshot: &mut BootstrapSnapshot,
         document_id: &DocumentId,
         state: &CanonicalBodyState,
-    ) {
+    ) -> Result<(), StoreError> {
         upsert_body_state(snapshot, document_id, state);
         self.transaction
             .execute(
@@ -233,7 +233,8 @@ impl SnapshotBodyPersistence for SqliteBodyPersistence<'_> {
                     state.storage_payload(),
                 ],
             )
-            .expect("sqlite canonical body state should persist");
+            .map_err(StoreError::from)?;
+        Ok(())
     }
 
     fn append_retained_history(

@@ -313,7 +313,7 @@ pub(crate) fn file_purge_document_body_history(
         &request.workspace_id,
         ProvenanceEvent {
             cursor: event_cursor,
-            timestamp_ms: current_time_ms(),
+            timestamp_ms: current_time_ms()?,
             actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
             document_id: Some(DocumentId::new(request.document_id.clone())),
             mount_relative_path: mount_relative_path.clone(),
@@ -378,7 +378,7 @@ pub(crate) fn file_redact_document_body_history(
         &request.workspace_id,
         ProvenanceEvent {
             cursor: event_cursor,
-            timestamp_ms: current_time_ms(),
+            timestamp_ms: current_time_ms()?,
             actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
             document_id: Some(DocumentId::new(request.document_id.clone())),
             mount_relative_path: mount_relative_path.clone(),
@@ -570,7 +570,7 @@ pub(crate) fn file_restore_workspace_at_cursor(
             &request.workspace_id,
             ProvenanceEvent {
                 cursor: event_cursor,
-                timestamp_ms: current_time_ms(),
+                timestamp_ms: current_time_ms()?,
                 actor_id: projector_domain::ActorId::new(request.actor_id.clone()),
                 document_id: Some(change.document_id.clone()),
                 mount_relative_path: Some(change.path.mount_path.clone()),
@@ -585,7 +585,7 @@ pub(crate) fn file_restore_workspace_at_cursor(
                 &request.actor_id,
                 change.document_id.as_str(),
                 &FULL_TEXT_BODY_MODEL.checkpoint_history(body.base_text, body.body_text),
-                current_time_ms(),
+                current_time_ms()?,
             )?;
         }
         file_append_path_revision(
@@ -600,7 +600,7 @@ pub(crate) fn file_restore_workspace_at_cursor(
                 relative_path: change.path.relative_path,
                 deleted: change.path.deleted,
                 event_kind: change.path.event_kind,
-                timestamp_ms: current_time_ms(),
+                timestamp_ms: current_time_ms()?,
             },
         )?;
     }

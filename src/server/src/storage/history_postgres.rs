@@ -614,24 +614,29 @@ pub(crate) async fn postgres_reconstruct_workspace_at_cursor(
         )
         .await?;
 
-    let body_map = replay_body_revision_run(body_rows.into_iter().map(|row| {
-        let kind = RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
-            .expect("stored retained body history kind should parse");
-        FileBodyRevision {
-            seq: row.get::<_, i64>("seq") as u64,
-            workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
-            actor_id: String::new(),
-            document_id: row.get::<_, String>("document_id"),
-            checkpoint_anchor_seq: row
-                .get::<_, Option<i64>>("checkpoint_anchor_seq")
-                .map(|seq| seq as u64),
-            history_kind: kind,
-            base_text: row.get::<_, String>("base_text"),
-            body_text: row.get::<_, String>("body_text"),
-            conflicted: row.get::<_, bool>("conflicted"),
-            timestamp_ms: 0,
-        }
-    }));
+    let body_revisions = body_rows
+        .into_iter()
+        .map(|row| {
+            let kind =
+                RetainedBodyHistoryKind::parse(row.get::<_, String>("history_kind").as_str())
+                    .map_err(StoreError::new)?;
+            Ok(FileBodyRevision {
+                seq: row.get::<_, i64>("seq") as u64,
+                workspace_cursor: row.get::<_, i64>("workspace_cursor") as u64,
+                actor_id: String::new(),
+                document_id: row.get::<_, String>("document_id"),
+                checkpoint_anchor_seq: row
+                    .get::<_, Option<i64>>("checkpoint_anchor_seq")
+                    .map(|seq| seq as u64),
+                history_kind: kind,
+                base_text: row.get::<_, String>("base_text"),
+                body_text: row.get::<_, String>("body_text"),
+                conflicted: row.get::<_, bool>("conflicted"),
+                timestamp_ms: 0,
+            })
+        })
+        .collect::<Result<Vec<_>, StoreError>>()?;
+    let body_map = replay_body_revision_run(body_revisions);
 
     let mut entries = path_rows
         .into_iter()

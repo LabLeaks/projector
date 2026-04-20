@@ -59,7 +59,7 @@ pub(super) fn create_document_tx(
     });
     let body_persistence = SqliteBodyPersistence::new(transaction, &request.workspace_id);
     let initial_state = FULL_TEXT_BODY_MODEL.state_from_materialized_text(request.text.clone());
-    body_persistence.write_current_state(&mut state.snapshot, &document_id, &initial_state);
+    body_persistence.write_current_state(&mut state.snapshot, &document_id, &initial_state)?;
 
     let event = make_event(
         &mut state,
@@ -132,7 +132,7 @@ pub(super) fn update_document_tx(
         &mut state.snapshot,
         &document_id,
         merge.canonical_state(),
-    );
+    )?;
 
     let event = make_event(
         &mut state,
