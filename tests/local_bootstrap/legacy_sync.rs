@@ -4,6 +4,7 @@ Legacy `projector sync` compatibility harness used by local-bootstrap proofs whi
 */
 // @fileimplements PROJECTOR.TESTS.SUPPORT.LOCAL_BOOTSTRAP_LEGACY_SYNC
 use super::*;
+use super::command_harness::merged_test_envs;
 
 #[derive(Clone, Debug)]
 struct LegacySyncArgs {
@@ -347,8 +348,13 @@ fn projector_home_for_test(repo_root: &Path, envs: &[(&str, &str)]) -> Projector
     let merged = merged_test_envs(repo_root, envs);
     let home = merged
         .iter()
-        .find(|(key, _)| key == "PROJECTOR_HOME")
-        .map(|(_, value)| value.clone())
+        .find_map(|pair| {
+            if pair.0 == "PROJECTOR_HOME" {
+                Some(pair.1.clone())
+            } else {
+                None
+            }
+        })
         .expect("projector home env");
     ProjectorHome::new(home)
 }
