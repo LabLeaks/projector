@@ -3,6 +3,7 @@
 Owns the top-level sync loop and watch-loop orchestration while delegating reconciliation and recovery details to narrower runtime modules.
 */
 // @fileimplements PROJECTOR.RUNTIME.DAEMON
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::io;
 use std::thread;
@@ -80,12 +81,11 @@ pub fn apply_authoritative_snapshot(
     snapshot: &BootstrapSnapshot,
 ) -> Result<(), Box<dyn Error>> {
     let materializer = ProjectionMaterializer::new(binding);
-    let known_mounts = binding
-        .projection_mounts()
-        .into_iter()
-        .map(|mount| mount.relative_path)
-        .collect::<std::collections::BTreeSet<_>>();
-    materializer.ensure_projection_roots()?;
+    let projection_mounts = binding.projection_mounts();
+    let known_mounts = projection_mounts
+        .iter()
+        .map(|mount| mount.relative_path.clone())
+        .collect::<BTreeSet<_>>();
     let mut plan = materializer.plan(snapshot)?;
     let previous_paths = reconcile::load_saved_materialized_paths(binding.projector_dir());
     let current_live_paths = snapshot
@@ -113,7 +113,7 @@ pub fn apply_authoritative_snapshot(
     plan.files_to_remove.sort();
     plan.files_to_remove.dedup();
     materializer.apply(&plan)?;
-    reconcile::save_snapshot_checkpoints(binding.projector_dir(), snapshot)?;
+    reconcile::save_snapshot_checkpoints(binding.projector_dir(), snapshot, &known_mounts)?;
     Ok(())
 }
 

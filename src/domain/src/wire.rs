@@ -6,9 +6,7 @@ Defines typed sync payloads for bootstrap, delta reads, document lifecycle write
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::{
-    DocumentId, HistoryCompactionPolicy, ManifestState, ProvenanceEvent, SyncEntryKind,
-};
+use crate::{DocumentId, HistoryCompactionPolicy, ManifestState, ProvenanceEvent, SyncEntryKind};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct BootstrapRequest {
@@ -110,7 +108,9 @@ impl std::str::FromStr for HistoryCompactionPolicySourceKind {
             "default" => Ok(Self::Default),
             "path_override" => Ok(Self::PathOverride),
             "ancestor_override" => Ok(Self::AncestorOverride),
-            other => Err(format!("unknown history compaction policy source kind {other}")),
+            other => Err(format!(
+                "unknown history compaction policy source kind {other}"
+            )),
         }
     }
 }

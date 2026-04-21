@@ -25,7 +25,7 @@ where
     C: SyncContext,
     T: Transport<Error = io::Error>,
 {
-    let touched_paths = moves::touched_projection_paths(runner.binding, events);
+    let touched_paths = moves::touched_projection_paths(runner.binding, current_snapshot, events);
     if touched_paths.is_empty() {
         return Ok(None);
     }

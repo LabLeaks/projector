@@ -4,6 +4,7 @@ Owns repo-runtime refresh and watch-root derivation for the machine-global daemo
 */
 // @fileimplements PROJECTOR.RUNTIME.MACHINE_DAEMON_REPOS
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::io;
 use std::path::PathBuf;
 
@@ -18,7 +19,14 @@ pub(super) fn refresh_repo_runtimes(
     home: &ProjectorHome,
     runtimes: &mut BTreeMap<PathBuf, RepoRuntime>,
 ) -> Result<(), io::Error> {
-    let registry = repo_registry_store.load()?;
+    let mut registry = repo_registry_store.load()?;
+    let original_repo_count = registry.repos.len();
+    registry
+        .repos
+        .retain(|repo| !repo_root_is_missing(&repo.repo_root));
+    if registry.repos.len() != original_repo_count {
+        repo_registry_store.save(&registry)?;
+    }
     let wanted_roots = registry
         .repos
         .iter()
@@ -47,6 +55,12 @@ pub(super) fn refresh_repo_runtimes(
     }
 
     Ok(())
+}
+
+fn repo_root_is_missing(repo_root: &PathBuf) -> bool {
+    fs::metadata(repo_root)
+        .map(|_| false)
+        .unwrap_or_else(|err| err.kind() == io::ErrorKind::NotFound)
 }
 
 pub(super) fn watched_mounts(sync_targets: &[SyncEntryTarget]) -> Vec<WatchedMount> {

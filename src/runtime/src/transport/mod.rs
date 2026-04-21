@@ -7,8 +7,8 @@ use std::path::Path;
 
 use projector_domain::{
     BootstrapSnapshot, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision,
-    DocumentId, DocumentPathRevision, HistoryCompactionPolicy,
-    HistoryCompactionPolicySourceKind, ProvenanceEvent, SyncContext,
+    DocumentId, DocumentPathRevision, HistoryCompactionPolicy, HistoryCompactionPolicySourceKind,
+    ProvenanceEvent, SyncContext,
 };
 
 mod http;

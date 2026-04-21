@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.2
+
+`0.2.2` is a dogfood hardening release for sync-entry recovery, diagnostics, and local filesystem move handling.
+
+### Highlights
+
+- Added non-interactive remote sync-entry discovery with `projector get --list`, plus source-repo and remote-path filters.
+- Improved `projector get` guidance when users pass a workspace id or likely repo-relative path instead of a sync-entry id.
+- Hardened `projector add` so failed repo registration or bootstrap attempts roll back the repo-local sync-entry config.
+- Made `projector log` distinguish local runtime or sandbox transport restrictions from proven daemon or server sync failures.
+- Clarified that `projector connect status` reports local attachment state, not authoritative remote inventory.
+- Preserved document ids when watcher events report a renamed folder under a synced directory mount instead of individual child-file moves.
+- Relocated moved or renamed directory sync-entry roots by updating the repo-local binding to the unique matching moved root instead of treating the old root disappearance as remote deletion.
+
 ## 0.2.1
 
 `0.2.1` is a small patch release on top of the new `0.2.x` baseline.

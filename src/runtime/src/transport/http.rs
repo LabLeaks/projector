@@ -8,20 +8,20 @@ use std::path::Path;
 
 use projector_domain::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
-    ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
-    DocumentBodyPurgeMatch, DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentId,
-    DocumentPathRevision, GetHistoryCompactionPolicyRequest,
+    ChangesSinceResponse, ClearHistoryCompactionPolicyRequest,
+    ClearHistoryCompactionPolicyResponse, CreateDocumentRequest, CreateDocumentResponse,
+    DeleteDocumentRequest, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch,
+    DocumentBodyRevision, DocumentId, DocumentPathRevision, GetHistoryCompactionPolicyRequest,
     GetHistoryCompactionPolicyResponse, HistoryCompactionPolicy, ListBodyRevisionsRequest,
-    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse,
-    ListPathRevisionsRequest, ListPathRevisionsResponse, ListSyncEntriesRequest,
-    ListSyncEntriesResponse, MoveDocumentRequest,
-    PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
-    PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
-    ProvenanceEvent, PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest,
-    ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
-    ResolveHistoricalPathResponse, RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
-    SetHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyRequest,
-    ClearHistoryCompactionPolicyResponse, SyncContext, SyncEntrySummary, UpdateDocumentRequest,
+    ListBodyRevisionsResponse, ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
+    ListPathRevisionsResponse, ListSyncEntriesRequest, ListSyncEntriesResponse,
+    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
+    PreviewPurgeDocumentBodyHistoryResponse, PreviewRedactDocumentBodyHistoryRequest,
+    PreviewRedactDocumentBodyHistoryResponse, ProvenanceEvent, PurgeDocumentBodyHistoryRequest,
+    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse, RedactDocumentBodyHistoryRequest,
+    ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest,
+    SyncContext, SyncEntrySummary, UpdateDocumentRequest,
 };
 
 use super::Transport;
@@ -498,7 +498,10 @@ impl Transport for HttpTransport {
             .map_err(io::Error::other)?;
 
         if !response.status().is_success() {
-            return Err(response_error("get history compaction policy request", response));
+            return Err(response_error(
+                "get history compaction policy request",
+                response,
+            ));
         }
 
         let payload: GetHistoryCompactionPolicyResponse =
@@ -524,7 +527,10 @@ impl Transport for HttpTransport {
             .map_err(io::Error::other)?;
 
         if !response.status().is_success() {
-            return Err(response_error("set history compaction policy request", response));
+            return Err(response_error(
+                "set history compaction policy request",
+                response,
+            ));
         }
 
         Ok(())

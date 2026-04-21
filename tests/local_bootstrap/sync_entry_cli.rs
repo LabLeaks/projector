@@ -354,6 +354,35 @@ fn add_registers_repo_in_machine_sync_registry() {
     assert_eq!(registry.repos[0].entry_count, 1);
 }
 
+#[test]
+fn failed_add_bootstrap_does_not_publish_sync_entry_to_machine_registry() {
+    let repo = temp_repo("add-bootstrap-failure-registry");
+    let projector_home = temp_projector_home("add-bootstrap-failure-registry");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    fs::write(repo.join(".gitignore"), "private/\n").expect("write gitignore");
+    fs::create_dir_all(repo.join("private")).expect("create private dir");
+    run_projector_with_env(
+        &repo,
+        &["connect", "--id", "homebox", "--server", "127.0.0.1:1"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    let _stderr = run_projector_failure_with_env(
+        &repo,
+        &["add", "private"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    let config = FileRepoSyncConfigStore::new(&repo)
+        .load()
+        .expect("load repo sync config");
+    assert!(config.entries.is_empty());
+    let registry = FileMachineSyncRegistryStore::new(ProjectorHome::new(&projector_home))
+        .load()
+        .expect("load machine sync registry");
+    assert!(registry.repos.is_empty());
+}
+
 // @verifies PROJECTOR.CLI.ADD.REJECTS_VERSION_CONTROLLED_PATH_WITHOUT_FORCE
 #[test]
 fn add_rejects_version_controlled_path_without_force() {
@@ -525,6 +554,148 @@ fn get_by_id_attaches_remote_sync_entry_and_materializes_it_locally() {
     );
 }
 
+// @verifies PROJECTOR.CLI.GET.REJECTS_LIKELY_REPO_PATH_INPUT
+#[test]
+fn get_rejects_likely_repo_relative_path_input_with_discovery_guidance() {
+    let repo = temp_repo("get-rejects-path");
+    let projector_home = temp_projector_home("get-rejects-path");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    fs::write(repo.join(".gitignore"), "private/\n").expect("write gitignore");
+
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    let snapshot = BootstrapSnapshot {
+        manifest: ManifestState {
+            entries: vec![ManifestEntry {
+                document_id: DocumentId::new("doc-remote-note"),
+                mount_relative_path: PathBuf::from("private"),
+                relative_path: PathBuf::from("notes/seeded.md"),
+                kind: DocumentKind::Text,
+                deleted: false,
+            }],
+        },
+        bodies: vec![DocumentBody {
+            document_id: DocumentId::new("doc-remote-note"),
+            text: "# Seeded remote note\n".to_owned(),
+        }],
+    };
+    seed_remote_sync_entry(
+        &state_dir,
+        "ws-remote-note",
+        "private",
+        SyncEntryKind::Directory,
+        "source-repo",
+        &snapshot,
+    );
+
+    run_projector_with_env(
+        &repo,
+        &["connect", "--id", "homebox", "--server", &addr],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    let stderr = run_projector_failure_with_env(
+        &repo,
+        &["get", "private/notes/seeded.md"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    assert!(stderr.contains("expects a sync-entry id"));
+    assert!(stderr.contains("repo-relative path"));
+    assert!(stderr.contains("projector get --list"));
+}
+
+// @verifies PROJECTOR.CLI.GET.NONINTERACTIVE_DISCOVERY_FILTERS_REMOTE_ENTRIES
+#[test]
+fn get_list_filters_remote_entries_by_source_repo_and_remote_path() {
+    let repo = temp_repo("get-list-filters");
+    let projector_home = temp_projector_home("get-list-filters");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+    let private_snapshot = BootstrapSnapshot {
+        manifest: ManifestState {
+            entries: vec![ManifestEntry {
+                document_id: DocumentId::new("doc-private-brief"),
+                mount_relative_path: PathBuf::from("private"),
+                relative_path: PathBuf::from("briefs/seeded.html"),
+                kind: DocumentKind::Text,
+                deleted: false,
+            }],
+        },
+        bodies: vec![DocumentBody {
+            document_id: DocumentId::new("doc-private-brief"),
+            text: "<p>private brief</p>\n".to_owned(),
+        }],
+    };
+    let public_snapshot = BootstrapSnapshot {
+        manifest: ManifestState {
+            entries: vec![ManifestEntry {
+                document_id: DocumentId::new("doc-public-readme"),
+                mount_relative_path: PathBuf::from("public"),
+                relative_path: PathBuf::from("README.md"),
+                kind: DocumentKind::Text,
+                deleted: false,
+            }],
+        },
+        bodies: vec![DocumentBody {
+            document_id: DocumentId::new("doc-public-readme"),
+            text: "# Public readme\n".to_owned(),
+        }],
+    };
+    seed_remote_sync_entry(
+        &state_dir,
+        "ws-private-briefs",
+        "private",
+        SyncEntryKind::Directory,
+        "source-rodeo-tools",
+        &private_snapshot,
+    );
+    seed_remote_sync_entry(
+        &state_dir,
+        "ws-public-readme",
+        "public",
+        SyncEntryKind::Directory,
+        "source-rodeo-tools",
+        &public_snapshot,
+    );
+    seed_remote_sync_entry(
+        &state_dir,
+        "ws-private-other",
+        "private",
+        SyncEntryKind::Directory,
+        "other-repo",
+        &private_snapshot,
+    );
+
+    run_projector_with_env(
+        &repo,
+        &["connect", "--id", "homebox", "--server", &addr],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    let stdout = run_projector_with_env(
+        &repo,
+        &[
+            "get",
+            "--list",
+            "--source-repo",
+            "source-rodeo",
+            "--remote-path",
+            "private",
+        ],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    assert!(stdout.contains("remote_sync_entry_count: 1"));
+    assert!(stdout.contains("remote_sync_entry: id=ws-private-briefs"));
+    assert!(stdout.contains("remote_path=private"));
+    assert!(stdout.contains("source_repo=source-rodeo-tools"));
+    assert!(!stdout.contains("ws-public-readme"));
+    assert!(!stdout.contains("ws-private-other"));
+}
+
 // @verifies PROJECTOR.BINDING.WHOLE_REMOTE_ENTRY
 #[test]
 fn get_attaches_one_whole_remote_sync_entry_by_stable_server_id() {
@@ -569,6 +740,12 @@ fn get_attaches_one_whole_remote_sync_entry_by_stable_server_id() {
     let sync_entry_id = transport.list_sync_entries(10).expect("list sync entries")[0]
         .sync_entry_id
         .clone();
+    fs::create_dir_all(repo.join(".projector")).expect("create projector dir");
+    fs::write(
+        repo.join(".projector/materialized_paths.txt"),
+        "private\tbriefs/entry.html\tstale-fingerprint\n",
+    )
+    .expect("write stale materialized paths");
 
     run_projector_with_env(
         &repo,

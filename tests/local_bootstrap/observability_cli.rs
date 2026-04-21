@@ -77,6 +77,46 @@ fn sync_start_status_and_stop_manage_machine_daemon() {
 }
 
 #[test]
+fn sync_start_warns_without_failing_when_current_repo_registration_fails() {
+    let repo = temp_repo("machine-daemon-registration-warning");
+    let projector_home = temp_projector_home("machine-daemon-registration-warning");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    fs::create_dir_all(repo.join(".projector")).expect("create projector dir");
+    fs::write(repo.join(".projector/sync-entries.json"), "{not json")
+        .expect("write malformed sync config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_projector"))
+        .args(["sync", "start"])
+        .current_dir(&repo)
+        .env("PROJECTOR_HOME", projector_home_str)
+        .env("PROJECTOR_DAEMON_POLL_MS", "50")
+        .output()
+        .expect("run projector sync start");
+    let stop = run_projector_with_env(
+        &repo,
+        &["sync", "stop"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    assert!(
+        output.status.success(),
+        "sync start failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("daemon_running: true"),
+        "unexpected stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("sync_start_registration_warning"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stop.contains("daemon_running: false"));
+}
+
+#[test]
 fn status_and_log_surface_local_sync_issues() {
     let repo = temp_repo("sync-issue-status");
     let binding = CheckoutBinding {

@@ -91,10 +91,19 @@ pub(crate) fn run_add(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         .entries
         .sort_by(|left, right| left.local_relative_path.cmp(&right.local_relative_path));
 
-    bootstrap_local_sync_entry(&repo_root, &next_config, &entry, &profiles)?;
-
     sync_store.save(&next_config)?;
-    sync_machine_repo_registration(&repo_root)?;
+    if let Err(err) = bootstrap_local_sync_entry(&repo_root, &next_config, &entry, &profiles) {
+        return Err(with_rollback_context(
+            err,
+            rollback_sync_entry_add(&repo_root, &sync_store, &existing_config).err(),
+        ));
+    }
+    if let Err(err) = sync_machine_repo_registration(&repo_root) {
+        return Err(with_rollback_context(
+            err,
+            rollback_sync_entry_add(&repo_root, &sync_store, &existing_config).err(),
+        ));
+    }
     FileProvenanceLog::new(repo_root.join(".projector/events.log")).append(&StoredEvent {
         timestamp_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -112,6 +121,28 @@ pub(crate) fn run_add(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     println!("server_profile: {}", entry.server_profile_id);
     println!("workspace_id: {}", entry.workspace_id.as_str());
     Ok(())
+}
+
+fn rollback_sync_entry_add(
+    repo_root: &std::path::Path,
+    sync_store: &FileRepoSyncConfigStore,
+    existing_config: &RepoSyncConfig,
+) -> Result<(), Box<dyn Error>> {
+    sync_store.save(existing_config)?;
+    sync_machine_repo_registration(repo_root)?;
+    Ok(())
+}
+
+fn with_rollback_context(
+    primary: Box<dyn Error>,
+    rollback: Option<Box<dyn Error>>,
+) -> Box<dyn Error> {
+    match rollback {
+        Some(rollback) => {
+            format!("{primary}; rollback to previous sync-entry config failed: {rollback}").into()
+        }
+        None => primary,
+    }
 }
 
 pub(crate) fn run_remove(args: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -146,6 +177,18 @@ pub(crate) fn run_get(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         "projector get",
     )?;
     let transport = HttpTransport::new(format!("http://{}", profile.server_addr));
+    if get_args.list_remote_entries {
+        if get_args.sync_entry_id.is_some() || get_args.local_path.is_some() {
+            return Err("get --list does not accept a sync-entry id or local path argument".into());
+        }
+        let entries = filter_remote_sync_entries(
+            transport.list_sync_entries(100)?,
+            get_args.source_repo_filter.as_deref(),
+            get_args.remote_path_filter.as_deref(),
+        );
+        print_remote_sync_entry_list(&entries);
+        return Ok(());
+    }
     let entry = match get_args.sync_entry_id.as_deref() {
         Some(sync_entry_id) => find_remote_sync_entry(&transport, sync_entry_id)?,
         None => {
@@ -407,10 +450,97 @@ fn find_remote_sync_entry(
     sync_entry_id: &str,
 ) -> Result<SyncEntrySummary, Box<dyn Error>> {
     let entries = transport.list_sync_entries(100)?;
-    entries
+    if let Some(entry) = entries
         .into_iter()
         .find(|entry| entry.sync_entry_id == sync_entry_id)
-        .ok_or_else(|| format!("remote sync entry {sync_entry_id} was not found").into())
+    {
+        return Ok(entry);
+    }
+
+    let message = match classify_get_identifier_candidate(sync_entry_id) {
+        GetIdentifierCandidate::WorkspaceId => format!(
+            "`projector get` expects a sync-entry id, but `{sync_entry_id}` looks like a workspace id. Run `projector get --list` to discover sync-entry ids for recovery."
+        ),
+        GetIdentifierCandidate::LikelyRepoRelativePath => format!(
+            "`projector get` expects a sync-entry id, but `{sync_entry_id}` looks like a repo-relative path. Run `projector get --list` to discover remote entries, then retry with the chosen sync-entry id."
+        ),
+        GetIdentifierCandidate::Unknown => format!(
+            "remote sync entry {sync_entry_id} was not found; run `projector get --list` to discover available sync-entry ids"
+        ),
+    };
+    Err(message.into())
+}
+
+fn filter_remote_sync_entries(
+    entries: Vec<SyncEntrySummary>,
+    source_repo_filter: Option<&str>,
+    remote_path_filter: Option<&str>,
+) -> Vec<SyncEntrySummary> {
+    let source_repo_filter = source_repo_filter.map(|value| value.to_ascii_lowercase());
+    let remote_path_filter = remote_path_filter.map(|value| value.to_ascii_lowercase());
+    entries
+        .into_iter()
+        .filter(|entry| {
+            source_repo_filter.as_ref().is_none_or(|needle| {
+                entry
+                    .source_repo_name
+                    .as_deref()
+                    .is_some_and(|value| value.to_ascii_lowercase().contains(needle))
+            })
+        })
+        .filter(|entry| {
+            remote_path_filter
+                .as_ref()
+                .is_none_or(|needle| entry.remote_path.to_ascii_lowercase().contains(needle))
+        })
+        .collect()
+}
+
+fn print_remote_sync_entry_list(entries: &[SyncEntrySummary]) {
+    println!("remote_sync_entry_count: {}", entries.len());
+    for entry in entries {
+        println!(
+            "remote_sync_entry: id={} workspace_id={} remote_path={} kind={} source_repo={} last_updated_ms={}",
+            entry.sync_entry_id,
+            entry.workspace_id,
+            entry.remote_path,
+            format_sync_entry_kind(&entry.kind),
+            entry.source_repo_name.as_deref().unwrap_or("none"),
+            entry
+                .last_updated_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_owned())
+        );
+        if let Some(preview) = entry.preview.as_deref() {
+            println!(
+                "remote_sync_entry_preview: id={} preview={}",
+                entry.sync_entry_id, preview
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GetIdentifierCandidate {
+    WorkspaceId,
+    LikelyRepoRelativePath,
+    Unknown,
+}
+
+fn classify_get_identifier_candidate(candidate: &str) -> GetIdentifierCandidate {
+    if candidate.starts_with("ws-") {
+        return GetIdentifierCandidate::WorkspaceId;
+    }
+    if normalize_projection_relative_path(candidate).is_ok()
+        && (candidate.contains('/')
+            || candidate.contains('\\')
+            || candidate.contains('.')
+            || candidate.starts_with('_')
+            || !candidate.starts_with("entry-"))
+    {
+        return GetIdentifierCandidate::LikelyRepoRelativePath;
+    }
+    GetIdentifierCandidate::Unknown
 }
 
 fn ensure_path_not_tracked_or_existing(
@@ -551,6 +681,9 @@ struct RemoveArgs {
 #[derive(Clone, Debug)]
 struct GetArgs {
     server_profile_id: Option<String>,
+    list_remote_entries: bool,
+    source_repo_filter: Option<String>,
+    remote_path_filter: Option<String>,
     sync_entry_id: Option<String>,
     local_path: Option<String>,
 }
@@ -601,6 +734,9 @@ fn parse_remove_args(args: &[String]) -> Result<RemoveArgs, Box<dyn Error>> {
 
 fn parse_get_args(args: &[String]) -> Result<GetArgs, Box<dyn Error>> {
     let mut server_profile_id = None;
+    let mut list_remote_entries = false;
+    let mut source_repo_filter = None;
+    let mut remote_path_filter = None;
     let mut positionals = Vec::new();
     let mut idx = 0;
     while idx < args.len() {
@@ -613,29 +749,162 @@ fn parse_get_args(args: &[String]) -> Result<GetArgs, Box<dyn Error>> {
                         .clone(),
                 );
             }
+            "--list" => {
+                list_remote_entries = true;
+            }
+            "--source-repo" => {
+                idx += 1;
+                source_repo_filter = Some(
+                    args.get(idx)
+                        .ok_or("missing value after --source-repo")?
+                        .clone(),
+                );
+            }
+            "--remote-path" => {
+                idx += 1;
+                remote_path_filter = Some(
+                    args.get(idx)
+                        .ok_or("missing value after --remote-path")?
+                        .clone(),
+                );
+            }
             arg => positionals.push(arg.to_owned()),
         }
         idx += 1;
     }
 
+    if !list_remote_entries && (source_repo_filter.is_some() || remote_path_filter.is_some()) {
+        return Err("get --source-repo and --remote-path filters require --list".into());
+    }
+
     match positionals.as_slice() {
         [] => Ok(GetArgs {
             server_profile_id,
+            list_remote_entries,
+            source_repo_filter,
+            remote_path_filter,
             sync_entry_id: None,
             local_path: None,
         }),
         [sync_entry_id] => Ok(GetArgs {
             server_profile_id,
+            list_remote_entries,
+            source_repo_filter,
+            remote_path_filter,
             sync_entry_id: Some(sync_entry_id.clone()),
             local_path: None,
         }),
         [sync_entry_id, local_path] => Ok(GetArgs {
             server_profile_id,
+            list_remote_entries,
+            source_repo_filter,
+            remote_path_filter,
             sync_entry_id: Some(sync_entry_id.clone()),
             local_path: Some(local_path.clone()),
         }),
         _ => Err(
             "get accepts at most a sync-entry id and one optional repo-relative local path".into(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use projector_domain::{SyncEntryKind, SyncEntrySummary};
+
+    use super::{
+        GetIdentifierCandidate, classify_get_identifier_candidate, filter_remote_sync_entries,
+        parse_get_args,
+    };
+
+    fn sample_entry(
+        id: &str,
+        remote_path: &str,
+        source_repo_name: Option<&str>,
+    ) -> SyncEntrySummary {
+        SyncEntrySummary {
+            sync_entry_id: id.to_owned(),
+            workspace_id: "ws-sample".to_owned(),
+            remote_path: remote_path.to_owned(),
+            kind: SyncEntryKind::Directory,
+            source_repo_name: source_repo_name.map(str::to_owned),
+            last_updated_ms: None,
+            preview: None,
+        }
+    }
+
+    #[test]
+    fn parse_get_args_supports_noninteractive_listing_filters() {
+        let args = vec![
+            "--profile".to_owned(),
+            "spotless2".to_owned(),
+            "--list".to_owned(),
+            "--source-repo".to_owned(),
+            "special".to_owned(),
+            "--remote-path".to_owned(),
+            "_project".to_owned(),
+        ];
+
+        let parsed = parse_get_args(&args).expect("parse get args");
+        assert_eq!(parsed.server_profile_id.as_deref(), Some("spotless2"));
+        assert!(parsed.list_remote_entries);
+        assert_eq!(parsed.source_repo_filter.as_deref(), Some("special"));
+        assert_eq!(parsed.remote_path_filter.as_deref(), Some("_project"));
+        assert!(parsed.sync_entry_id.is_none());
+        assert!(parsed.local_path.is_none());
+    }
+
+    #[test]
+    fn parse_get_args_rejects_filters_without_list() {
+        let args = vec![
+            "--source-repo".to_owned(),
+            "special".to_owned(),
+            "entry-private".to_owned(),
+        ];
+
+        let err = parse_get_args(&args).expect_err("filters require list");
+
+        assert!(err.to_string().contains("require --list"));
+    }
+
+    #[test]
+    fn classify_get_identifier_candidate_flags_paths_and_workspace_ids() {
+        assert_eq!(
+            classify_get_identifier_candidate("AGENTS.md"),
+            GetIdentifierCandidate::LikelyRepoRelativePath
+        );
+        assert_eq!(
+            classify_get_identifier_candidate("_project"),
+            GetIdentifierCandidate::LikelyRepoRelativePath
+        );
+        assert_eq!(
+            classify_get_identifier_candidate("ws-123"),
+            GetIdentifierCandidate::WorkspaceId
+        );
+        assert_eq!(
+            classify_get_identifier_candidate("entry-private"),
+            GetIdentifierCandidate::Unknown
+        );
+    }
+
+    #[test]
+    fn filter_remote_sync_entries_matches_repo_and_remote_path() {
+        let filtered = filter_remote_sync_entries(
+            vec![
+                sample_entry("entry-a", "_project", Some("special")),
+                sample_entry("entry-b", "AGENTS.md", Some("projector")),
+                sample_entry("entry-c", "_project/archive", Some("special-mirror")),
+            ],
+            Some("special"),
+            Some("_project"),
+        );
+
+        assert_eq!(
+            filtered
+                .into_iter()
+                .map(|entry| entry.sync_entry_id)
+                .collect::<Vec<_>>(),
+            vec!["entry-a".to_owned(), "entry-c".to_owned()]
+        );
     }
 }

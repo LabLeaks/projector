@@ -9,7 +9,7 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use projector_domain::{BootstrapSnapshot, ProjectionMount, SyncContext};
+use projector_domain::{BootstrapSnapshot, ProjectionMount, SyncContext, SyncEntryKind};
 
 use super::discovery::discover_local_text_files;
 use super::materialized_bodies::load_materialized_body_texts;
@@ -133,17 +133,27 @@ pub(super) fn push_local_text_deletions(
 ) -> Result<(Vec<(PathBuf, PathBuf)>, u64), Box<dyn Error>> {
     let mut deleted = Vec::new();
     let mut manifest_cursor = current_cursor;
+    let mounts_by_relative_path = binding
+        .projection_mounts()
+        .into_iter()
+        .map(|mount| (mount.relative_path.clone(), mount))
+        .collect::<HashMap<_, _>>();
     for entry in snapshot
         .manifest
         .entries
         .iter()
         .filter(|entry| !entry.deleted)
     {
-        let mounts_by_relative_path = binding
-            .projection_mounts()
-            .into_iter()
-            .map(|mount| (mount.relative_path.clone(), mount))
-            .collect::<HashMap<_, _>>();
+        let Some(mount) = mounts_by_relative_path.get(&entry.mount_relative_path) else {
+            return Err(format!(
+                "snapshot references unknown mount {}",
+                entry.mount_relative_path.display()
+            )
+            .into());
+        };
+        if mount.kind == SyncEntryKind::Directory && !mount.absolute_path.exists() {
+            continue;
+        }
         let absolute_path = absolute_path_for_entry(
             mounts_by_relative_path.get(&entry.mount_relative_path),
             entry,

@@ -20,10 +20,17 @@ pub(crate) fn run_log() -> Result<(), Box<dyn Error>> {
     let local_log = FileProvenanceLog::new(repo_root.join(".projector/events.log"));
     let printed_overlay = print_local_overlay_events(&local_log)?;
 
-    let remote_events = fetch_remote_events(&repo_root)?;
-    if !remote_events.is_empty() {
-        print_remote_events(remote_events);
-        return Ok(());
+    match fetch_remote_events(&repo_root) {
+        Ok(remote_events) => {
+            if !remote_events.is_empty() {
+                print_remote_events(remote_events);
+                return Ok(());
+            }
+        }
+        Err(err) if remote::is_reportable_remote_fetch_failure(&*err) => {
+            remote::print_remote_fetch_failure(&*err);
+        }
+        Err(err) => return Err(err),
     }
 
     print_all_local_events(&local_log, printed_overlay)

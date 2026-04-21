@@ -15,6 +15,7 @@ use crate::sync_entry_cli::{
     workspace_binding_for_target,
 };
 
+#[derive(Debug)]
 struct CompactArgs {
     repo_relative_path: PathBuf,
     revisions: Option<u32>,

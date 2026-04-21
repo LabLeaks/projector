@@ -1,5 +1,6 @@
 _project/
 AGENTS.md
+.agents/
 .projector/
 target/
 __pycache__/

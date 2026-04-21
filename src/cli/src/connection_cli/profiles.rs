@@ -37,6 +37,8 @@ pub(crate) fn run_connect(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
         let registry = profiles.load()?;
         println!("connection_count: {}", registry.profiles.len());
+        println!("connection_scope: local_attachment_state");
+        println!("remote_sync_entry_inventory: not_reported");
         for profile in registry.profiles {
             let dependents = collect_profile_dependents(&home, &profile.profile_id)?;
             let mut repo_roots = dependents

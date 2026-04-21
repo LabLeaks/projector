@@ -20,6 +20,10 @@ Top-level version-reporting surface for the projector CLI.
 @spec PROJECTOR.CLI.ADD.BOOTSTRAPS_LOCAL_SYNC_ENTRY
 When `projector add <path>` targets an existing local file or folder, projector bootstraps that whole local sync entry against the chosen connected server profile immediately and rematerializes the resulting authoritative state locally.
 
+@spec PROJECTOR.CLI.ADD.STATUS_SURFACE_REFLECTS_NEW_ENTRY_WITHOUT_RESTART
+@planned
+After `projector add <path>` succeeds, daemon-backed projector status surfaces reflect the new sync entry without requiring a manual daemon restart.
+
 @spec PROJECTOR.CLI.ADD.REJECTS_VERSION_CONTROLLED_PATH_WITHOUT_FORCE
 If `projector add <path>` targets a file or folder already tracked by the repo's VCS, projector warns and requires `--force` before adding that path to projector sync.
 
@@ -32,8 +36,14 @@ If no server profiles are connected, `projector add <path>` rejects the add and 
 @spec PROJECTOR.CLI.GET.BY_ID
 `projector get <sync-entry-id> [local-path]` attaches the selected whole remote sync entry by stable server-side id and materializes it locally at the requested repo-local path.
 
+@spec PROJECTOR.CLI.GET.REJECTS_LIKELY_REPO_PATH_INPUT
+When `projector get <candidate>` receives a likely repo-relative path instead of a sync-entry id, projector rejects it with guidance that `projector get` expects a sync-entry id and points the user toward remote sync-entry discovery.
+
 @spec PROJECTOR.CLI.GET.BROWSER
 Running `projector get` without an id opens a terminal browser for a chosen connected server profile's available remote sync entries, showing entry id, source repo metadata, and content preview before materialization.
+
+@spec PROJECTOR.CLI.GET.NONINTERACTIVE_DISCOVERY_FILTERS_REMOTE_ENTRIES
+Projector exposes a non-interactive remote sync-entry discovery surface that can filter available remote entries by at least source repo metadata and current remote path before local materialization.
 
 @spec PROJECTOR.CLI.STATUS.REPORTS_CONFLICTED_TEXT_DOCUMENTS
 When materialized text files contain projector conflict markers, `projector status` reports the conflicted file count and repo-relative conflicted paths.
@@ -43,6 +53,9 @@ When materialized text files contain projector conflict markers, `projector stat
 
 @spec PROJECTOR.CLI.LOG.SUMMARY
 `projector log` shows recent durable workspace events with path and summary, including concurrent text-merge summaries from server provenance.
+
+@spec PROJECTOR.CLI.LOG.DISTINGUISHES_LOCAL_TRANSPORT_RESTRICTIONS
+When `projector log` fails because the local runtime blocks its daemon or server transport path, projector reports that as a local runtime access failure instead of implying daemon or server sync failure.
 
 @spec PROJECTOR.CLI.HISTORY.RENDERS_DOCUMENT_REVISIONS
 `projector history <repo-relative-path>` resolves the live bound document at that path and renders recent body and path revisions from the server.
@@ -82,6 +95,9 @@ When `projector purge <repo-relative-path>` runs in an interactive terminal with
 
 @spec PROJECTOR.CLI.CONNECT.REPORTS_SERVER_STATUS
 `projector connect status` reports all connected server profiles with ids, reachability, usage counts, and the repo-local sync-entry paths currently attached through each profile.
+
+@spec PROJECTOR.CLI.CONNECT.STATUS_CLARIFIES_LOCAL_ATTACHMENT_SCOPE
+`projector connect status` explicitly labels its repo-local path view as local attachment state rather than authoritative remote sync-entry inventory.
 
 @spec PROJECTOR.CLI.DISCONNECT.REMOVES_CONNECTED_PROFILE
 `projector disconnect <profile>` warns with the repo-local paths that will become desynced and then removes that machine-global connected server profile when confirmed.

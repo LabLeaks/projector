@@ -85,6 +85,29 @@ fn connect_status_reports_reachability_for_all_profiles() {
     assert!(status_stdout.contains("sync_entry_count=0"));
 }
 
+// @verifies PROJECTOR.CLI.CONNECT.STATUS_CLARIFIES_LOCAL_ATTACHMENT_SCOPE
+#[test]
+fn connect_status_labels_local_attachment_scope() {
+    let repo = temp_repo("connect-status-scope");
+    let projector_home = temp_projector_home("connect-status-scope");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+
+    run_projector_with_env(
+        &repo,
+        &["connect", "--id", "workbox", "--server", "127.0.0.1:9"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    let status_stdout = run_projector_with_env(
+        &repo,
+        &["connect", "status"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    assert!(status_stdout.contains("connection_scope: local_attachment_state"));
+    assert!(status_stdout.contains("remote_sync_entry_inventory: not_reported"));
+}
+
 // @verifies PROJECTOR.CLI.DOCTOR.REPORTS_PROFILE_AND_REACHABILITY
 #[test]
 fn doctor_reports_clean_profile_reachability_and_sync_entry_sanity() {

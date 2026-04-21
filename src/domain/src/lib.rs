@@ -11,24 +11,21 @@ pub use binding::{
 pub use ids::{ActorId, DocumentId, WorkspaceId};
 pub use manifest::{DocumentKind, ManifestEntry, ManifestState};
 pub use provenance::{ProvenanceEvent, ProvenanceEventKind};
-pub use sync_config::{
-    HistoryCompactionPolicy, RepoSyncConfig, RepoSyncEntry, SyncEntryKind,
-};
+pub use sync_config::{HistoryCompactionPolicy, RepoSyncConfig, RepoSyncEntry, SyncEntryKind};
 pub use wire::{
     ApiErrorResponse, BootstrapRequest, BootstrapResponse, BootstrapSnapshot, ChangesSinceRequest,
-    ChangesSinceResponse, CreateDocumentRequest, CreateDocumentResponse, DeleteDocumentRequest,
-    ClearHistoryCompactionPolicyRequest, ClearHistoryCompactionPolicyResponse, DocumentBody,
-    DocumentBodyHistoryKind, DocumentBodyPurgeMatch, DocumentBodyRedactionMatch,
-    DocumentBodyRevision, DocumentPathEventKind, DocumentPathRevision,
+    ChangesSinceResponse, ClearHistoryCompactionPolicyRequest,
+    ClearHistoryCompactionPolicyResponse, CreateDocumentRequest, CreateDocumentResponse,
+    DeleteDocumentRequest, DocumentBody, DocumentBodyHistoryKind, DocumentBodyPurgeMatch,
+    DocumentBodyRedactionMatch, DocumentBodyRevision, DocumentPathEventKind, DocumentPathRevision,
     GetHistoryCompactionPolicyRequest, GetHistoryCompactionPolicyResponse,
     HistoryCompactionPolicySourceKind, ListBodyRevisionsRequest, ListBodyRevisionsResponse,
-    ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest,
-    ListPathRevisionsResponse, ListSyncEntriesRequest, ListSyncEntriesResponse,
-    MoveDocumentRequest, PreviewPurgeDocumentBodyHistoryRequest,
-    PreviewPurgeDocumentBodyHistoryResponse, PreviewRedactDocumentBodyHistoryRequest,
-    PreviewRedactDocumentBodyHistoryResponse, PurgeDocumentBodyHistoryRequest,
-    ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
-    RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest,
-    ResolveHistoricalPathResponse, RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest,
-    SetHistoryCompactionPolicyRequest, SyncEntrySummary, UpdateDocumentRequest,
+    ListEventsRequest, ListEventsResponse, ListPathRevisionsRequest, ListPathRevisionsResponse,
+    ListSyncEntriesRequest, ListSyncEntriesResponse, MoveDocumentRequest,
+    PreviewPurgeDocumentBodyHistoryRequest, PreviewPurgeDocumentBodyHistoryResponse,
+    PreviewRedactDocumentBodyHistoryRequest, PreviewRedactDocumentBodyHistoryResponse,
+    PurgeDocumentBodyHistoryRequest, ReconstructWorkspaceRequest, ReconstructWorkspaceResponse,
+    RedactDocumentBodyHistoryRequest, ResolveHistoricalPathRequest, ResolveHistoricalPathResponse,
+    RestoreDocumentBodyRevisionRequest, RestoreWorkspaceRequest, SetHistoryCompactionPolicyRequest,
+    SyncEntrySummary, UpdateDocumentRequest,
 };

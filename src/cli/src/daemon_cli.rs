@@ -10,8 +10,8 @@ use std::thread;
 use std::time::Duration;
 
 use projector_runtime::{
-    FileMachineDaemonStateStore, MachineDaemonOptions, ProjectorHome, run_machine_daemon,
-    terminate_process,
+    FileMachineDaemonStateStore, FileMachineSyncRegistryStore, FileRepoSyncConfigStore,
+    MachineDaemonOptions, ProjectorHome, discover_repo_root, run_machine_daemon, terminate_process,
 };
 
 pub(crate) fn run_sync_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
@@ -47,12 +47,14 @@ fn run_sync_start() -> Result<(), Box<dyn Error>> {
     let home = ProjectorHome::discover()?;
     let daemon_state_store = FileMachineDaemonStateStore::new(home.clone());
     if let Some(active) = daemon_state_store.load_active()? {
+        warn_if_current_repo_registration_fails();
         println!("daemon_running: true");
         println!("projector_home: {}", home.root().display());
         println!("daemon_pid: {}", active.pid);
         println!("daemon_started_at_ms: {}", active.started_at_ms);
         return Ok(());
     }
+    warn_if_current_repo_registration_fails();
 
     let exe = env::current_exe()?;
     let mut child = Command::new(exe);
@@ -89,6 +91,26 @@ fn run_sync_start() -> Result<(), Box<dyn Error>> {
     }
 
     Err("machine daemon did not report healthy startup".into())
+}
+
+fn warn_if_current_repo_registration_fails() {
+    if let Err(err) = register_current_repo_if_configured() {
+        eprintln!("sync_start_registration_warning: {err}");
+    }
+}
+
+fn register_current_repo_if_configured() -> Result<(), Box<dyn Error>> {
+    let cwd = env::current_dir()?;
+    let repo_root = discover_repo_root(&cwd);
+    let config = FileRepoSyncConfigStore::new(&repo_root).load()?;
+    if config.entries.is_empty() {
+        return Ok(());
+    }
+
+    let home = ProjectorHome::discover()?;
+    let registry_store = FileMachineSyncRegistryStore::new(home);
+    let _ = registry_store.sync_repo(&repo_root, &config)?;
+    Ok(())
 }
 
 fn run_sync_stop() -> Result<(), Box<dyn Error>> {
