@@ -11,14 +11,66 @@ fn top_level_help_renders_usage() {
     let repo = temp_repo("top-level-help");
 
     let long_help = run_projector(&repo, &["--help"]);
-    assert!(long_help.contains("Usage: projector <"));
-    assert!(long_help.contains("|compact <repo-relative-path>"));
+    assert!(long_help.contains("Usage:\n  projector <command> [options]"));
+    assert!(long_help.contains("Repo sync:"));
+    assert!(long_help.contains("start                      Start or resume syncing for this repo"));
+    assert!(long_help.contains("stop                       Pause syncing for this repo"));
+    assert!(long_help.contains("stop --all                 Stop the machine-global daemon"));
+    assert!(long_help.contains("Run `projector help <command>`"));
 
     let help_command = run_projector(&repo, &["help"]);
     assert_eq!(help_command, long_help);
 
+    let help_flag = run_projector(&repo, &["help", "--help"]);
+    assert_eq!(help_flag, long_help);
+
+    let help_short_flag = run_projector(&repo, &["help", "-h"]);
+    assert_eq!(help_short_flag, long_help);
+
     let short_help = run_projector(&repo, &["-h"]);
     assert_eq!(short_help, long_help);
+}
+
+// @verifies PROJECTOR.CLI.HELP.RENDERS_COMMAND_USAGE
+#[test]
+fn command_help_renders_usage() {
+    let repo = temp_repo("command-help");
+
+    let help_command = run_projector(&repo, &["help", "start"]);
+    assert!(help_command.contains("Usage:\n  projector start"));
+    assert!(help_command.contains("Start or resume syncing for the current repo"));
+
+    let flag_help = run_projector(&repo, &["start", "--help"]);
+    assert_eq!(flag_help, help_command);
+
+    let stop_help = run_projector(&repo, &["stop", "--help"]);
+    assert!(stop_help.contains("Usage:\n  projector stop"));
+    assert!(stop_help.contains("projector stop --all"));
+}
+
+// @verifies PROJECTOR.CLI.HELP.RENDERS_COMMAND_USAGE
+#[test]
+fn command_help_rejects_extra_arguments() {
+    let repo = temp_repo("command-help-extra");
+
+    let stderr = run_projector_failure_with_env(&repo, &["help", "start", "extra"], &[]);
+
+    assert!(stderr.contains("help accepts at most one command"));
+    assert!(stderr.contains("unexpected argument: extra"));
+}
+
+// @verifies PROJECTOR.CLI.HELP.REJECTS_REMOVED_SYNC_NAMESPACE
+#[test]
+fn removed_sync_namespace_suggests_top_level_lifecycle_commands() {
+    let repo = temp_repo("removed-sync-suggestion");
+
+    let stderr = run_projector_failure_with_env(&repo, &["sync", "start"], &[]);
+
+    assert!(stderr.contains("unknown command: sync"));
+    assert!(stderr.contains("projector start"));
+    assert!(stderr.contains("projector stop"));
+    assert!(stderr.contains("projector status"));
+    assert!(stderr.contains("Run `projector --help` for available commands."));
 }
 
 // @verifies PROJECTOR.CLI.VERSION.REPORTS_RELEASE_VERSION
@@ -36,16 +88,115 @@ fn top_level_version_reports_release_version() {
     assert_eq!(short_version, long_version);
 }
 
-// @verifies PROJECTOR.CLI.SYNC.MANAGES_MACHINE_DAEMON_PROCESS
+// @verifies PROJECTOR.CLI.START.RESUMES_CURRENT_REPO
 #[test]
-fn sync_start_status_and_stop_manage_machine_daemon() {
+fn start_and_status_report_machine_daemon_and_current_repo() {
     let repo = temp_repo("machine-daemon");
     let projector_home = temp_projector_home("machine-daemon");
     let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    FileRepoSyncConfigStore::new(&repo)
+        .save(&RepoSyncConfig {
+            entries: vec![RepoSyncEntry {
+                entry_id: "entry-private".to_owned(),
+                workspace_id: WorkspaceId::new("ws-private"),
+                actor_id: ActorId::new("actor-private"),
+                server_profile_id: "homebox".to_owned(),
+                local_relative_path: PathBuf::from("private"),
+                remote_relative_path: PathBuf::from("private"),
+                kind: SyncEntryKind::Directory,
+            }],
+        })
+        .expect("save sync config");
 
     let start = run_projector_with_env(
         &repo,
-        &["sync", "start"],
+        &["start"],
+        &[
+            ("PROJECTOR_HOME", projector_home_str),
+            ("PROJECTOR_DAEMON_POLL_MS", "50"),
+        ],
+    );
+    assert!(start.contains("daemon_running: true"));
+    assert!(start.contains("repo_syncing: true"));
+    assert!(start.contains("repo_sync_entry_count: 1"));
+
+    let status = run_projector_with_env(
+        &repo,
+        &["status"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+    assert!(status.contains("daemon_running: true"));
+    assert!(status.contains("repo_syncing: true"));
+    assert!(status.contains(&format!("projector_home: {}", projector_home.display())));
+}
+
+// @verifies PROJECTOR.CLI.STATUS.REPORTS_SYNC_REGISTRATION
+#[test]
+fn status_reports_current_repo_sync_registration() {
+    let repo = temp_repo("status-repo-sync-registration");
+    let projector_home = temp_projector_home("status-repo-sync-registration");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    let config = RepoSyncConfig {
+        entries: vec![RepoSyncEntry {
+            entry_id: "entry-private".to_owned(),
+            workspace_id: WorkspaceId::new("ws-private"),
+            actor_id: ActorId::new("actor-private"),
+            server_profile_id: "homebox".to_owned(),
+            local_relative_path: PathBuf::from("private"),
+            remote_relative_path: PathBuf::from("private"),
+            kind: SyncEntryKind::Directory,
+        }],
+    };
+    FileRepoSyncConfigStore::new(&repo)
+        .save(&config)
+        .expect("save sync config");
+    FileMachineSyncRegistryStore::new(ProjectorHome::new(&projector_home))
+        .sync_repo(&repo, &config)
+        .expect("register repo");
+
+    let status = run_projector_with_env(
+        &repo,
+        &["status"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+
+    assert!(status.contains("repo_syncing: true"));
+}
+
+// @verifies PROJECTOR.CLI.STOP.PAUSES_CURRENT_REPO
+#[test]
+fn stop_pauses_current_repo_without_stopping_machine_daemon() {
+    let repo = temp_repo("repo-sync-stop");
+    let other_repo = temp_repo("repo-sync-stop-other");
+    let projector_home = temp_projector_home("repo-sync-stop");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    let config = RepoSyncConfig {
+        entries: vec![RepoSyncEntry {
+            entry_id: "entry-private".to_owned(),
+            workspace_id: WorkspaceId::new("ws-private"),
+            actor_id: ActorId::new("actor-private"),
+            server_profile_id: "homebox".to_owned(),
+            local_relative_path: PathBuf::from("private"),
+            remote_relative_path: PathBuf::from("private"),
+            kind: SyncEntryKind::Directory,
+        }],
+    };
+    FileRepoSyncConfigStore::new(&repo)
+        .save(&config)
+        .expect("save sync config");
+    FileRepoSyncConfigStore::new(&other_repo)
+        .save(&config)
+        .expect("save other sync config");
+    let registry_store = FileMachineSyncRegistryStore::new(ProjectorHome::new(&projector_home));
+    registry_store
+        .sync_repo(&repo, &config)
+        .expect("register repo");
+    registry_store
+        .sync_repo(&other_repo, &config)
+        .expect("register other repo");
+    let start = run_projector_with_env(
+        &repo,
+        &["start"],
         &[
             ("PROJECTOR_HOME", projector_home_str),
             ("PROJECTOR_DAEMON_POLL_MS", "50"),
@@ -53,66 +204,118 @@ fn sync_start_status_and_stop_manage_machine_daemon() {
     );
     assert!(start.contains("daemon_running: true"));
 
+    let stop = run_projector_with_env(&repo, &["stop"], &[("PROJECTOR_HOME", projector_home_str)]);
+    assert!(stop.contains("repo_syncing: false"));
+    assert!(stop.contains("daemon_running: true"));
+    let registry = registry_store.load().expect("load registry");
+    assert_eq!(registry.repos.len(), 1);
+    assert_eq!(registry.repos[0].repo_root, other_repo);
+
     let status = run_projector_with_env(
         &repo,
-        &["sync", "status"],
+        &["status"],
         &[("PROJECTOR_HOME", projector_home_str)],
     );
     assert!(status.contains("daemon_running: true"));
-    assert!(status.contains(&format!("projector_home: {}", projector_home.display())));
+    assert!(status.contains("repo_syncing: false"));
+}
+
+// @verifies PROJECTOR.CLI.STOP.ALL_STOPS_MACHINE_DAEMON
+#[test]
+fn stop_all_stops_machine_daemon() {
+    let repo = temp_repo("machine-daemon-stop-all");
+    let projector_home = temp_projector_home("machine-daemon-stop-all");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+
+    let start = run_projector_with_env(
+        &repo,
+        &["start"],
+        &[
+            ("PROJECTOR_HOME", projector_home_str),
+            ("PROJECTOR_DAEMON_POLL_MS", "50"),
+        ],
+    );
+    assert!(start.contains("daemon_running: true"));
 
     let stop = run_projector_with_env(
         &repo,
-        &["sync", "stop"],
+        &["stop", "--all"],
         &[("PROJECTOR_HOME", projector_home_str)],
     );
     assert!(stop.contains("daemon_running: false"));
-
-    let status = run_projector_with_env(
-        &repo,
-        &["sync", "status"],
-        &[("PROJECTOR_HOME", projector_home_str)],
-    );
-    assert!(status.contains("daemon_running: false"));
 }
 
 #[test]
-fn sync_start_warns_without_failing_when_current_repo_registration_fails() {
-    let repo = temp_repo("machine-daemon-registration-warning");
-    let projector_home = temp_projector_home("machine-daemon-registration-warning");
+fn start_fails_when_current_repo_registration_fails() {
+    let repo = temp_repo("machine-daemon-registration-failure");
+    let projector_home = temp_projector_home("machine-daemon-registration-failure");
     let projector_home_str = projector_home.to_str().expect("projector home utf8");
     fs::create_dir_all(repo.join(".projector")).expect("create projector dir");
     fs::write(repo.join(".projector/sync-entries.json"), "{not json")
         .expect("write malformed sync config");
 
     let output = Command::new(env!("CARGO_BIN_EXE_projector"))
-        .args(["sync", "start"])
+        .args(["start"])
         .current_dir(&repo)
         .env("PROJECTOR_HOME", projector_home_str)
         .env("PROJECTOR_DAEMON_POLL_MS", "50")
         .output()
-        .expect("run projector sync start");
+        .expect("run projector start");
+
+    assert!(
+        !output.status.success(),
+        "start unexpectedly succeeded: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("sync-entry config is invalid JSON"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let registry = FileMachineSyncRegistryStore::new(ProjectorHome::new(&projector_home))
+        .load()
+        .expect("load machine registry");
+    assert!(
+        registry.repos.is_empty(),
+        "malformed repo config must not publish registry entries: {:?}",
+        registry.repos
+    );
+    let daemon_state = FileMachineDaemonStateStore::new(ProjectorHome::new(&projector_home))
+        .load_active()
+        .expect("load daemon state");
+    assert!(daemon_state.is_none());
+}
+
+#[test]
+fn start_does_not_warn_when_current_repo_has_no_sync_config() {
+    let repo = temp_repo("machine-daemon-no-sync-config");
+    let projector_home = temp_projector_home("machine-daemon-no-sync-config");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_projector"))
+        .args(["start"])
+        .current_dir(&repo)
+        .env("PROJECTOR_HOME", projector_home_str)
+        .env("PROJECTOR_DAEMON_POLL_MS", "50")
+        .output()
+        .expect("run projector start");
     let stop = run_projector_with_env(
         &repo,
-        &["sync", "stop"],
+        &["stop", "--all"],
         &[("PROJECTOR_HOME", projector_home_str)],
     );
 
     assert!(
         output.status.success(),
-        "sync start failed: {}",
+        "start failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("daemon_running: true"),
-        "unexpected stdout: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("sync_start_registration_warning"),
+        String::from_utf8_lossy(&output.stderr).is_empty(),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("repo_sync_entry_count: 0"));
     assert!(stop.contains("daemon_running: false"));
 }
 

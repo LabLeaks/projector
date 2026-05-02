@@ -5,6 +5,8 @@ Owns machine-daemon lifecycle commands and the internal daemon process entrypoin
 // @fileimplements PROJECTOR.EDGE.DAEMON_CLI
 use std::env;
 use std::error::Error;
+use std::fs;
+use std::path::Path;
 use std::process::{self, Command};
 use std::thread;
 use std::time::Duration;
@@ -14,15 +16,18 @@ use projector_runtime::{
     MachineDaemonOptions, ProjectorHome, discover_repo_root, run_machine_daemon, terminate_process,
 };
 
-pub(crate) fn run_sync_command(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+pub(crate) fn run_start(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+    if !args.is_empty() {
+        return Err("start does not accept arguments".into());
+    }
+    run_start_current_repo()
+}
+
+pub(crate) fn run_stop(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
-        Some("start") if args.len() == 1 => run_sync_start(),
-        Some("stop") if args.len() == 1 => run_sync_stop(),
-        Some("status") if args.len() == 1 => run_sync_status(),
-        Some("start" | "stop" | "status") => {
-            Err("sync start|stop|status do not accept additional arguments".into())
-        }
-        _ => Err("usage: projector sync <start|stop|status>".into()),
+        None => run_stop_current_repo(),
+        Some("--all") if args.len() == 1 => run_stop_all(),
+        _ => Err("usage: projector stop [--all]".into()),
     }
 }
 
@@ -43,18 +48,18 @@ pub(crate) fn run_daemon(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn run_sync_start() -> Result<(), Box<dyn Error>> {
+fn run_start_current_repo() -> Result<(), Box<dyn Error>> {
     let home = ProjectorHome::discover()?;
+    register_current_repo_if_configured()?;
     let daemon_state_store = FileMachineDaemonStateStore::new(home.clone());
     if let Some(active) = daemon_state_store.load_active()? {
-        warn_if_current_repo_registration_fails();
         println!("daemon_running: true");
         println!("projector_home: {}", home.root().display());
         println!("daemon_pid: {}", active.pid);
         println!("daemon_started_at_ms: {}", active.started_at_ms);
+        print_current_repo_sync_state(&home)?;
         return Ok(());
     }
-    warn_if_current_repo_registration_fails();
 
     let exe = env::current_exe()?;
     let mut child = Command::new(exe);
@@ -86,17 +91,12 @@ fn run_sync_start() -> Result<(), Box<dyn Error>> {
             println!("projector_home: {}", home.root().display());
             println!("daemon_pid: {}", active.pid);
             println!("daemon_started_at_ms: {}", active.started_at_ms);
+            print_current_repo_sync_state(&home)?;
             return Ok(());
         }
     }
 
     Err("machine daemon did not report healthy startup".into())
-}
-
-fn warn_if_current_repo_registration_fails() {
-    if let Err(err) = register_current_repo_if_configured() {
-        eprintln!("sync_start_registration_warning: {err}");
-    }
 }
 
 fn register_current_repo_if_configured() -> Result<(), Box<dyn Error>> {
@@ -113,7 +113,34 @@ fn register_current_repo_if_configured() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_sync_stop() -> Result<(), Box<dyn Error>> {
+fn run_stop_current_repo() -> Result<(), Box<dyn Error>> {
+    let home = ProjectorHome::discover()?;
+    let cwd = env::current_dir()?;
+    let repo_root = discover_repo_root(&cwd);
+    let entry_count = FileRepoSyncConfigStore::new(&repo_root)
+        .load()
+        .map(|config| config.entries.len())
+        .ok();
+    let registry_store = FileMachineSyncRegistryStore::new(home.clone());
+    let _ = registry_store.unregister_repo(&repo_root)?;
+    let active = FileMachineDaemonStateStore::new(home.clone()).load_active()?;
+
+    println!("repo_syncing: false");
+    println!("repo_root: {}", repo_root.display());
+    match entry_count {
+        Some(entry_count) => println!("repo_sync_entry_count: {entry_count}"),
+        None => println!("repo_sync_entry_count: unknown"),
+    }
+    println!("daemon_running: {}", active.is_some());
+    println!("projector_home: {}", home.root().display());
+    if let Some(active) = active {
+        println!("daemon_pid: {}", active.pid);
+        println!("daemon_started_at_ms: {}", active.started_at_ms);
+    }
+    Ok(())
+}
+
+fn run_stop_all() -> Result<(), Box<dyn Error>> {
     let home = ProjectorHome::discover()?;
     let daemon_state_store = FileMachineDaemonStateStore::new(home);
     let Some(active) = daemon_state_store.load_active()? else {
@@ -133,17 +160,35 @@ fn run_sync_stop() -> Result<(), Box<dyn Error>> {
     Err("machine daemon did not stop cleanly".into())
 }
 
-fn run_sync_status() -> Result<(), Box<dyn Error>> {
-    let home = ProjectorHome::discover()?;
-    let daemon_state_store = FileMachineDaemonStateStore::new(home.clone());
-    if let Some(active) = daemon_state_store.load_active()? {
-        println!("daemon_running: true");
-        println!("projector_home: {}", home.root().display());
-        println!("daemon_pid: {}", active.pid);
-        println!("daemon_started_at_ms: {}", active.started_at_ms);
-    } else {
-        println!("daemon_running: false");
-        println!("projector_home: {}", home.root().display());
+pub(crate) fn current_repo_syncing(home: &ProjectorHome) -> Result<bool, Box<dyn Error>> {
+    let cwd = env::current_dir()?;
+    let repo_root = discover_repo_root(&cwd);
+    let registry = FileMachineSyncRegistryStore::new(home.clone()).load()?;
+    Ok(registry
+        .repos
+        .iter()
+        .any(|repo| same_repo_root(&repo.repo_root, &repo_root)))
+}
+
+fn print_current_repo_sync_state(home: &ProjectorHome) -> Result<(), Box<dyn Error>> {
+    let cwd = env::current_dir()?;
+    let repo_root = discover_repo_root(&cwd);
+    let repo_syncing = current_repo_syncing(home)?;
+    println!("repo_syncing: {repo_syncing}");
+    println!("repo_root: {}", repo_root.display());
+    match FileRepoSyncConfigStore::new(&repo_root).load() {
+        Ok(config) => println!("repo_sync_entry_count: {}", config.entries.len()),
+        Err(_) => println!("repo_sync_entry_count: unknown"),
     }
     Ok(())
+}
+
+fn same_repo_root(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }

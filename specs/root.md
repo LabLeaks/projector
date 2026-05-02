@@ -40,8 +40,11 @@ Server-side document lifecycle behavior.
 ### `@group PROJECTOR.CLI`
 User-visible command surfaces for operating projector.
 
-### `@group PROJECTOR.CLI.SYNC`
-Machine-global sync daemon lifecycle behavior.
+### `@group PROJECTOR.CLI.START`
+Repo-local sync lifecycle start behavior.
+
+### `@group PROJECTOR.CLI.STOP`
+Repo-local and machine-global sync lifecycle stop behavior.
 
 ### `@group PROJECTOR.CLI.CONNECT`
 Global server-profile management behavior.

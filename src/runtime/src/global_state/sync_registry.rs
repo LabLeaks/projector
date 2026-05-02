@@ -68,7 +68,9 @@ impl FileMachineSyncRegistryStore {
         config: &RepoSyncConfig,
     ) -> Result<MachineSyncRegistry, io::Error> {
         let mut registry = self.load()?;
-        registry.repos.retain(|repo| repo.repo_root != repo_root);
+        registry
+            .repos
+            .retain(|repo| !same_repo_root(&repo.repo_root, repo_root));
         if !config.entries.is_empty() {
             let mut server_profiles = config
                 .entries
@@ -89,6 +91,25 @@ impl FileMachineSyncRegistryStore {
             .sort_by(|left, right| left.repo_root.cmp(&right.repo_root));
         self.save(&registry)?;
         Ok(registry)
+    }
+
+    pub fn unregister_repo(&self, repo_root: &Path) -> Result<MachineSyncRegistry, io::Error> {
+        let mut registry = self.load()?;
+        registry
+            .repos
+            .retain(|repo| !same_repo_root(&repo.repo_root, repo_root));
+        self.save(&registry)?;
+        Ok(registry)
+    }
+}
+
+fn same_repo_root(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 
@@ -154,5 +175,25 @@ mod tests {
             .sync_repo(repo_root, &RepoSyncConfig::default())
             .expect("unregister repo");
         assert!(registry.repos.is_empty());
+    }
+
+    #[test]
+    fn unregister_repo_removes_only_that_repo() {
+        let store = FileMachineSyncRegistryStore::new(ProjectorHome::new(temp_projector_home(
+            "registry-unregister",
+        )));
+        let repo_root = Path::new("/tmp/projector-repo");
+        let other_repo_root = Path::new("/tmp/projector-other-repo");
+
+        store
+            .sync_repo(repo_root, &sample_config())
+            .expect("register repo");
+        store
+            .sync_repo(other_repo_root, &sample_config())
+            .expect("register other repo");
+
+        let registry = store.unregister_repo(repo_root).expect("unregister repo");
+        assert_eq!(registry.repos.len(), 1);
+        assert_eq!(registry.repos[0].repo_root, other_repo_root);
     }
 }

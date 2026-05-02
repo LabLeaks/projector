@@ -6,6 +6,7 @@ Persists and loads the repo-local checkpoint of previously materialized live doc
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use projector_domain::{BootstrapSnapshot, DocumentId};
@@ -24,13 +25,7 @@ pub(crate) fn load_materialized_paths(
 
     let mut paths = BTreeSet::new();
     for line in fs::read_to_string(path)?.lines() {
-        let mut parts = line.split('\t');
-        let mount = parts
-            .next()
-            .ok_or("invalid materialized path line: missing mount")?;
-        let relative = parts
-            .next()
-            .ok_or("invalid materialized path line: missing relative path")?;
+        let (mount, relative, _) = parse_materialized_path_line(line)?;
         paths.insert((PathBuf::from(mount), PathBuf::from(relative)));
     }
     Ok(paths)
@@ -65,15 +60,15 @@ pub(crate) fn save_materialized_paths(
         .iter()
         .filter(|entry| !entry.deleted)
     {
-        let Some(body_text) = body_text_by_id.get(&entry.document_id) else {
-            continue;
-        };
+        let fingerprint = body_text_by_id
+            .get(&entry.document_id)
+            .map(|body_text| text_fingerprint(body_text));
         stored.insert(
             (
                 entry.mount_relative_path.clone(),
                 entry.relative_path.clone(),
             ),
-            Some(text_fingerprint(body_text)),
+            fingerprint,
         );
     }
 
@@ -110,19 +105,26 @@ fn load_materialized_path_records(
 
     let mut records = BTreeMap::new();
     for line in fs::read_to_string(path)?.lines() {
-        let mut parts = line.split('\t');
-        let mount = parts
-            .next()
-            .ok_or("invalid materialized path line: missing mount")?;
-        let relative = parts
-            .next()
-            .ok_or("invalid materialized path line: missing relative path")?;
+        let (mount, relative, fingerprint) = parse_materialized_path_line(line)?;
         records.insert(
             (PathBuf::from(mount), PathBuf::from(relative)),
-            parts.next().map(str::to_owned),
+            fingerprint.map(str::to_owned),
         );
     }
     Ok(records)
+}
+
+fn parse_materialized_path_line(line: &str) -> Result<(&str, &str, Option<&str>), Box<dyn Error>> {
+    let parts = line.split('\t').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [mount, relative] => Ok((mount, relative, None)),
+        [mount, relative, fingerprint] => Ok((mount, relative, Some(fingerprint))),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid materialized path line: expected 2 or 3 tab-separated fields",
+        )
+        .into()),
+    }
 }
 
 fn text_fingerprint(text: &str) -> String {
@@ -138,6 +140,7 @@ fn text_fingerprint(text: &str) -> String {
 mod tests {
     use std::collections::BTreeSet;
     use std::fs;
+    use std::io;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -145,7 +148,10 @@ mod tests {
         BootstrapSnapshot, DocumentBody, DocumentId, DocumentKind, ManifestEntry, ManifestState,
     };
 
-    use super::{save_materialized_paths, text_fingerprint};
+    use super::{
+        load_materialized_path_records, load_materialized_paths, save_materialized_paths,
+        text_fingerprint,
+    };
 
     // @verifies PROJECTOR.SYNC.ROOT_RENAME_PRESERVES_SYNC_ENTRY_BINDINGS
     #[test]
@@ -218,6 +224,65 @@ mod tests {
             text_fingerprint("existing notes\n")
         )));
         assert!(!saved.contains("private\tbriefs/index.md"));
+    }
+
+    #[test]
+    fn save_materialized_paths_preserves_manifest_paths_without_body_payload() {
+        let projector_dir = temp_dir("manifest-path-without-body");
+        let materialized_paths = projector_dir.join("materialized_paths.txt");
+        let snapshot = BootstrapSnapshot {
+            manifest: ManifestState {
+                entries: vec![ManifestEntry {
+                    document_id: DocumentId::new("doc-private"),
+                    mount_relative_path: PathBuf::from("private"),
+                    relative_path: PathBuf::from("briefs/index.md"),
+                    kind: DocumentKind::Text,
+                    deleted: false,
+                }],
+            },
+            bodies: Vec::new(),
+        };
+
+        save_materialized_paths(
+            &projector_dir,
+            &snapshot,
+            &BTreeSet::from([PathBuf::from("private")]),
+        )
+        .expect("save materialized paths");
+
+        let saved = fs::read_to_string(&materialized_paths).expect("read materialized paths");
+        assert_eq!(saved, "private\tbriefs/index.md");
+    }
+
+    #[test]
+    fn materialized_path_loaders_reject_extra_tab_separated_fields() {
+        let projector_dir = temp_dir("invalid-extra-columns");
+        let materialized_paths = projector_dir.join("materialized_paths.txt");
+        fs::write(
+            &materialized_paths,
+            "private\tbriefs/index.md\tfingerprint\textra\n",
+        )
+        .expect("write invalid materialized paths");
+
+        let load_paths_err = load_materialized_paths(&projector_dir)
+            .expect_err("load materialized paths rejects extra field");
+        assert_eq!(
+            load_paths_err
+                .downcast_ref::<io::Error>()
+                .expect("io error")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let load_records_err = load_materialized_path_records(&materialized_paths)
+            .expect_err("load records rejects extra field");
+        assert_eq!(
+            load_records_err
+                .downcast_ref::<io::Error>()
+                .expect("io error")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     fn temp_dir(name: &str) -> PathBuf {

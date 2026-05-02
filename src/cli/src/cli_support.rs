@@ -11,8 +11,205 @@ use projector_runtime::{
 
 pub(crate) fn print_usage() {
     println!(
-        "Usage: projector <sync <start|stop|status>|connect [--id NAME] [--server host:port] [--ssh user@host]|connect status|disconnect <id> [--yes]|deploy [--profile NAME] [--ssh user@host] [--server-addr host:port] [--remote-dir PATH] [--sqlite-path PATH] [--listen-addr host:port] [--yes]|add [--force] [--profile ID] <repo-relative-path>|get [--profile ID] [--list] [--source-repo TEXT] [--remote-path TEXT] [sync-entry-id] [repo-relative-path]|remove <repo-relative-path>|rm <repo-relative-path>|doctor|status|log|history [--cursor N]|compact <repo-relative-path> [--revisions N --frequency N|--inherit]|restore [--confirm] <repo-relative-path>|redact [--confirm] <exact-text> <repo-relative-path>|purge [--confirm] <repo-relative-path>>"
+        "\
+projector {version}
+
+Usage:
+  projector <command> [options]
+  projector help [command]
+
+Repo sync:
+  start                      Start or resume syncing for this repo
+  stop                       Pause syncing for this repo
+  stop --all                 Stop the machine-global daemon for every repo
+  status                     Show repo sync health and daemon state
+  add [--force] [--profile ID] <path>
+                             Add a repo-local file or directory as a sync entry
+  get [--profile ID] [--list] [filters] [entry-id] [path]
+                             Discover or materialize remote sync entries
+  remove <path>              Remove one repo-local sync entry
+  rm <path>                  Alias for remove
+
+Connections:
+  connect [--id NAME] [--server host:port] [--ssh user@host]
+                             Add a machine-global server profile
+  connect status             List server profiles and local attachments
+  disconnect <id> [--yes]    Remove a server profile
+  deploy [options]           Provision and register a self-hosted server
+
+Inspection and history:
+  doctor                     Check profiles, registry, daemon, and sync entries
+  log                        Show local projector events
+  history [--cursor N] <path>
+  restore [--confirm] <path>
+  compact <path> [--revisions N --frequency N | --inherit]
+  redact [--confirm] <exact-text> <path>
+  purge [--confirm] <path>
+
+Run `projector help <command>` for command-specific usage.",
+        version = env!("CARGO_PKG_VERSION")
     );
+}
+
+pub(crate) fn print_command_help(command: &str) -> bool {
+    let Some(help) = command_help(command) else {
+        return false;
+    };
+    println!("{help}");
+    true
+}
+
+pub(crate) fn is_help_arg(arg: &str) -> bool {
+    arg == "--help" || arg == "-h"
+}
+
+pub(crate) fn unknown_command_error(command: &str) -> String {
+    let mut message = format!("unknown command: {command}");
+    if let Some(suggestion) = command_suggestion(command) {
+        message.push_str("\n\nDid you mean:\n  ");
+        message.push_str(suggestion);
+    }
+    message.push_str("\n\nRun `projector --help` for available commands.");
+    message
+}
+
+fn command_suggestion(command: &str) -> Option<&'static str> {
+    match command {
+        "sync" => Some("projector start\n  projector stop\n  projector status"),
+        "sync-stop-all" => Some("projector stop --all"),
+        "ls" | "list" => Some("projector get --list"),
+        _ => None,
+    }
+}
+
+fn command_help(command: &str) -> Option<&'static str> {
+    match command {
+        "start" => Some(
+            "\
+Usage:
+  projector start
+
+Start or resume syncing for the current repo. If the machine-global daemon is not
+running, projector starts it.",
+        ),
+        "stop" => Some(
+            "\
+Usage:
+  projector stop
+  projector stop --all
+
+Pause syncing for the current repo. Use `--all` only when you want to stop the
+machine-global daemon for every repo.",
+        ),
+        "add" => Some(
+            "\
+Usage:
+  projector add [--force] [--profile ID] <repo-relative-path>
+
+Add a repo-local file or directory as a sync entry. The path must be gitignored unless
+`--force` is provided.",
+        ),
+        "get" => Some(
+            "\
+Usage:
+  projector get [--profile ID] [--list] [--source-repo TEXT] [--remote-path TEXT]
+  projector get [--profile ID] <sync-entry-id> [repo-relative-path]
+
+Discover remote sync entries or materialize one into the current repo.",
+        ),
+        "remove" | "rm" => Some(
+            "\
+Usage:
+  projector remove <repo-relative-path>
+  projector rm <repo-relative-path>
+
+Remove one repo-local sync entry from projector configuration.",
+        ),
+        "connect" => Some(
+            "\
+Usage:
+  projector connect [--id NAME] [--server host:port] [--ssh user@host]
+  projector connect status
+
+Add or inspect machine-global server profiles.",
+        ),
+        "disconnect" => Some(
+            "\
+Usage:
+  projector disconnect <id> [--yes]
+
+Remove a machine-global server profile after warning about affected local attachments.",
+        ),
+        "deploy" => Some(
+            "\
+Usage:
+  projector deploy [--profile NAME] [--ssh user@host] [--server-addr host:port]
+                   [--remote-dir PATH] [--sqlite-path PATH] [--listen-addr host:port] [--yes]
+
+Provision and register a self-hosted projector server.",
+        ),
+        "status" => Some(
+            "\
+Usage:
+  projector status
+
+Show repo-local sync health, including daemon state, pending work, and conflicts.",
+        ),
+        "doctor" => Some(
+            "\
+Usage:
+  projector doctor
+
+Check server profiles, current-repo sync entries, machine registry state, daemon state,
+and recent sync issues.",
+        ),
+        "log" => Some(
+            "\
+Usage:
+  projector log
+
+Show local projector events for the current repo.",
+        ),
+        "history" => Some(
+            "\
+Usage:
+  projector history <repo-relative-path>
+  projector history --cursor N
+
+Show retained document history or reconstruct a workspace at an earlier cursor.",
+        ),
+        "restore" => Some(
+            "\
+Usage:
+  projector restore [--seq N] [--confirm] <repo-relative-path>
+
+Preview or apply a retained document restore.",
+        ),
+        "compact" => Some(
+            "\
+Usage:
+  projector compact <repo-relative-path>
+  projector compact <repo-relative-path> --revisions N --frequency N
+  projector compact <repo-relative-path> --inherit
+
+Inspect or set retained-history compaction policy for a synced path.",
+        ),
+        "redact" => Some(
+            "\
+Usage:
+  projector redact [--confirm] <exact-text> <repo-relative-path>
+
+Preview or apply an exact-text retained-history redaction.",
+        ),
+        "purge" => Some(
+            "\
+Usage:
+  projector purge [--confirm] <repo-relative-path>
+
+Preview or clear retained body content for one synced path.",
+        ),
+        _ => None,
+    }
 }
 
 pub(crate) fn print_version() {

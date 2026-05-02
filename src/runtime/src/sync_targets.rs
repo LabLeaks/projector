@@ -141,23 +141,21 @@ fn load_materialized_paths(repo_root: &Path) -> Result<BTreeSet<MaterializedPath
 
     let mut paths = BTreeSet::new();
     for line in fs::read_to_string(path)?.lines() {
-        let mut parts = line.split('\t');
-        let Some(mount) = parts.next() else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid materialized path line",
-            ));
-        };
-        let Some(relative) = parts.next() else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid materialized path line",
-            ));
+        let parts = line.split('\t').collect::<Vec<_>>();
+        let (mount, relative, text_fingerprint) = match parts.as_slice() {
+            [mount, relative] => (mount, relative, None),
+            [mount, relative, fingerprint] => (mount, relative, Some((*fingerprint).to_owned())),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid materialized path line: expected 2 or 3 tab-separated fields",
+                ));
+            }
         };
         paths.insert(MaterializedPath {
             mount_relative_path: PathBuf::from(mount),
             relative_path: PathBuf::from(relative),
-            text_fingerprint: parts.next().map(str::to_owned),
+            text_fingerprint,
         });
     }
     Ok(paths)
@@ -297,6 +295,7 @@ fn is_repo_metadata_or_build_dir(repo_root: &Path, current: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io;
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -557,5 +556,21 @@ mod tests {
             config.entries[0].local_relative_path,
             PathBuf::from("private")
         );
+    }
+
+    #[test]
+    fn load_sync_targets_rejects_malformed_materialized_path_records() {
+        let repo_root = temp_repo_root("sync-target-invalid-materialized-path");
+        fs::create_dir_all(repo_root.join(".projector")).expect("create projector dir");
+        fs::write(
+            repo_root.join(".projector/materialized_paths.txt"),
+            "private\tREADME.md\tfingerprint\textra\n",
+        )
+        .expect("write invalid materialized paths");
+
+        let err = super::load_materialized_paths(&repo_root)
+            .expect_err("load materialized paths rejects extra field");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

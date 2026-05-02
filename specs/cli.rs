@@ -5,14 +5,26 @@ Top-level usage surface for the projector CLI.
 @spec PROJECTOR.CLI.HELP.RENDERS_TOP_LEVEL_USAGE
 `projector help`, `projector --help`, and `projector -h` render the top-level usage surface without requiring a repo or server.
 
+@spec PROJECTOR.CLI.HELP.RENDERS_COMMAND_USAGE
+`projector help <command>` and `projector <command> --help` render command-specific usage for supported commands without requiring a repo or server.
+
+@spec PROJECTOR.CLI.HELP.REJECTS_REMOVED_SYNC_NAMESPACE
+When a user runs the removed `projector sync ...` namespace, projector rejects it and points them to top-level lifecycle commands such as `projector start`, `projector stop`, and `projector status`.
+
 @group PROJECTOR.CLI.VERSION
 Top-level version-reporting surface for the projector CLI.
 
 @spec PROJECTOR.CLI.VERSION.REPORTS_RELEASE_VERSION
 `projector --version` and `projector -V` print the released projector CLI version.
 
-@spec PROJECTOR.CLI.SYNC.MANAGES_MACHINE_DAEMON_PROCESS
-`projector sync start`, `projector sync status`, and `projector sync stop` manage and report the machine-global projector daemon process through machine-global projector state instead of doubling as repo-local bind commands.
+@spec PROJECTOR.CLI.START.RESUMES_CURRENT_REPO
+`projector start` ensures the machine-global projector daemon is running and registers the current repo when it has sync entries.
+
+@spec PROJECTOR.CLI.STOP.PAUSES_CURRENT_REPO
+`projector stop` pauses syncing for the current repo by unregistering that repo from the machine-global daemon registry without stopping the daemon for other registered repos.
+
+@spec PROJECTOR.CLI.STOP.ALL_STOPS_MACHINE_DAEMON
+`projector stop --all` stops the machine-global projector daemon process for every repo.
 
 @spec PROJECTOR.CLI.ADD
 `projector add <path>` registers one repo-local path as a whole sync-entry attachment in projector configuration and in the machine-global repo registry using the chosen connected server profile for that add action.
@@ -21,7 +33,6 @@ Top-level version-reporting surface for the projector CLI.
 When `projector add <path>` targets an existing local file or folder, projector bootstraps that whole local sync entry against the chosen connected server profile immediately and rematerializes the resulting authoritative state locally.
 
 @spec PROJECTOR.CLI.ADD.STATUS_SURFACE_REFLECTS_NEW_ENTRY_WITHOUT_RESTART
-@planned
 After `projector add <path>` succeeds, daemon-backed projector status surfaces reflect the new sync entry without requiring a manual daemon restart.
 
 @spec PROJECTOR.CLI.ADD.REJECTS_VERSION_CONTROLLED_PATH_WITHOUT_FORCE
@@ -47,6 +58,9 @@ Projector exposes a non-interactive remote sync-entry discovery surface that can
 
 @spec PROJECTOR.CLI.STATUS.REPORTS_CONFLICTED_TEXT_DOCUMENTS
 When materialized text files contain projector conflict markers, `projector status` reports the conflicted file count and repo-relative conflicted paths.
+
+@spec PROJECTOR.CLI.STATUS.REPORTS_SYNC_REGISTRATION
+`projector status` reports whether the current repo is registered for background syncing with the machine-global daemon.
 
 @spec PROJECTOR.CLI.LOG.RENDERS_LOCAL_EVENTS
 `projector log` renders the local projector event log when local bootstrap events exist.

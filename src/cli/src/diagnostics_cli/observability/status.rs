@@ -10,6 +10,7 @@ use projector_runtime::{
 };
 
 use crate::cli_support::{display_paths, format_sync_entry_kind, repo_root};
+use crate::daemon_cli::current_repo_syncing;
 use crate::sync_entry_cli::{
     group_sync_targets_by_workspace, load_sync_config, load_sync_targets_with_profiles,
 };
@@ -22,13 +23,15 @@ pub(crate) fn run_status() -> Result<(), Box<dyn Error>> {
     let sync_targets = load_sync_targets_with_profiles(&repo_root)?;
     let lease_store = FileRuntimeLeaseStore::new(repo_root.join(".projector/runtime.lock"));
     let active_runtime = lease_store.load_active()?;
-    let machine_daemon =
-        FileMachineDaemonStateStore::new(ProjectorHome::discover()?).load_active()?;
+    let home = ProjectorHome::discover()?;
+    let machine_daemon = FileMachineDaemonStateStore::new(home.clone()).load_active()?;
     let status_store = FileRuntimeStatusStore::new(repo_root.join(".projector/status.txt"));
     let status = status_store.load()?;
 
     println!("repo_root: {}", repo_root.display());
+    println!("projector_home: {}", home.root().display());
     println!("sync_entry_count: {}", sync_config.entries.len());
+    println!("repo_syncing: {}", current_repo_syncing(&home)?);
     for entry in &sync_config.entries {
         println!(
             "sync_entry: path={} kind={} server_profile={} workspace_id={}",

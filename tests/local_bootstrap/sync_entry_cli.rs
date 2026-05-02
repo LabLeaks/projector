@@ -3,6 +3,7 @@
 Sync-entry CLI proof for add, get, remove, and binding configuration under local bootstrap.
 */
 // @fileimplements PROJECTOR.TESTS.SYNC_ENTRY_CLI
+use super::command_harness::merged_test_envs;
 use super::*;
 
 // @verifies PROJECTOR.WORKSPACE.PROJECTION_ROOT
@@ -195,6 +196,128 @@ fn add_can_bootstrap_a_second_sync_entry_in_the_same_repo() {
     );
     assert!(!status.contains("last_sync_issue"), "{status}");
     assert!(!status.contains("sync_issue_count:"), "{status}");
+}
+
+// @verifies PROJECTOR.CLI.ADD.STATUS_SURFACE_REFLECTS_NEW_ENTRY_WITHOUT_RESTART
+#[test]
+fn running_daemon_picks_up_added_sync_entry_without_restart() {
+    struct DaemonStopGuard<'a> {
+        repo: &'a Path,
+        projector_home: &'a str,
+        active: bool,
+    }
+
+    impl<'a> DaemonStopGuard<'a> {
+        fn stop(&mut self) -> String {
+            self.active = false;
+            run_projector_with_env(
+                self.repo,
+                &["stop", "--all"],
+                &[("PROJECTOR_HOME", self.projector_home)],
+            )
+        }
+    }
+
+    impl Drop for DaemonStopGuard<'_> {
+        fn drop(&mut self) {
+            if self.active {
+                let _ = std::process::Command::new(env!("CARGO_BIN_EXE_projector"))
+                    .args(["stop", "--all"])
+                    .current_dir(self.repo)
+                    .envs(merged_test_envs(
+                        self.repo,
+                        &[("PROJECTOR_HOME", self.projector_home)],
+                    ))
+                    .output();
+            }
+        }
+    }
+
+    let repo = temp_repo("add-second-entry-running-daemon");
+    let projector_home = temp_projector_home("add-second-entry-running-daemon");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    fs::write(repo.join(".gitignore"), "AGENTS.md\n_project/\n").expect("write gitignore");
+    fs::write(repo.join("AGENTS.md"), "# Local agent notes\n").expect("write AGENTS");
+    fs::create_dir_all(repo.join("_project/notes")).expect("create _project dir");
+    fs::write(
+        repo.join("_project/notes/plan.md"),
+        "# Plan\n\nSecond sync entry.\n",
+    )
+    .expect("write plan");
+    let state_dir = repo.join("server-state");
+    let addr = spawn_server(&state_dir).to_string();
+
+    run_projector_with_env(
+        &repo,
+        &["connect", "--id", "homebox", "--server", &addr],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+    run_projector_with_env(
+        &repo,
+        &["add", "--force", "AGENTS.md"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+    let start = run_projector_with_env(
+        &repo,
+        &["start"],
+        &[
+            ("PROJECTOR_HOME", projector_home_str),
+            ("PROJECTOR_DAEMON_POLL_MS", "50"),
+        ],
+    );
+    assert!(start.contains("daemon_running: true"));
+    let mut daemon = DaemonStopGuard {
+        repo: &repo,
+        projector_home: projector_home_str,
+        active: true,
+    };
+
+    run_projector_with_env(
+        &repo,
+        &["add", "_project"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+    thread::sleep(Duration::from_millis(1500));
+    fs::write(
+        repo.join("_project/notes/daemon-pickup.md"),
+        "daemon picked up the added sync entry\n",
+    )
+    .expect("write post-add daemon proof file");
+
+    let config = FileRepoSyncConfigStore::new(&repo)
+        .load()
+        .expect("load sync config");
+    let project_entry = config
+        .entries
+        .iter()
+        .find(|entry| entry.local_relative_path == Path::new("_project"))
+        .expect("_project sync entry");
+    let snapshot_path = state_dir
+        .join("workspaces")
+        .join(project_entry.workspace_id.as_str())
+        .join("snapshot.json");
+    let mut snapshot = String::new();
+    for _ in 0..60 {
+        snapshot = fs::read_to_string(&snapshot_path).unwrap_or_default();
+        if snapshot.contains("daemon-pickup.md")
+            && snapshot.contains("daemon picked up the added sync entry")
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let stop = daemon.stop();
+
+    assert!(stop.contains("daemon_running: false"));
+    assert!(
+        snapshot.contains("daemon-pickup.md"),
+        "daemon did not sync the post-add file for the new entry: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("daemon picked up the added sync entry"),
+        "daemon did not sync the post-add file body for the new entry: {snapshot}"
+    );
 }
 
 // @verifies PROJECTOR.BINDING.SERVER_PROFILE
@@ -689,7 +812,8 @@ fn get_list_filters_remote_entries_by_source_repo_and_remote_path() {
     );
 
     assert!(stdout.contains("remote_sync_entry_count: 1"));
-    assert!(stdout.contains("remote_sync_entry: id=ws-private-briefs"));
+    assert!(stdout.contains("remote_sync_entry: sync_entry_id=ws-private-briefs"));
+    assert!(stdout.contains("workspace_id=ws-private-briefs"));
     assert!(stdout.contains("remote_path=private"));
     assert!(stdout.contains("source_repo=source-rodeo-tools"));
     assert!(!stdout.contains("ws-public-readme"));
@@ -737,9 +861,17 @@ fn get_attaches_one_whole_remote_sync_entry_by_stable_server_id() {
     );
 
     let transport = HttpTransport::new(format!("http://{addr}"));
-    let sync_entry_id = transport.list_sync_entries(10).expect("list sync entries")[0]
-        .sync_entry_id
-        .clone();
+    let sync_entry_id = transport
+        .list_sync_entries(10)
+        .expect("list sync entries")
+        .into_iter()
+        .find(|entry| {
+            entry.workspace_id == "ws-whole-entry"
+                && entry.remote_path == "private"
+                && entry.source_repo_name.as_deref() == Some("seed-repo")
+        })
+        .expect("seeded remote sync entry")
+        .sync_entry_id;
     fs::create_dir_all(repo.join(".projector")).expect("create projector dir");
     fs::write(
         repo.join(".projector/materialized_paths.txt"),

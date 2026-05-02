@@ -30,10 +30,10 @@ use projector_domain::{
     SetHistoryCompactionPolicyRequest, SyncContext, SyncEntryKind, WorkspaceId,
 };
 use projector_runtime::{
-    BindingStore, FileBindingStore, FileMachineSyncRegistryStore, FileProvenanceLog,
-    FileRepoSyncConfigStore, FileRuntimeStatusStore, FileServerProfileStore, HttpTransport,
-    ProjectorHome, RuntimeStatus, StoredEvent, SyncIssueDisposition, SyncLoopOptions, SyncRunner,
-    Transport, derive_sync_targets,
+    BindingStore, FileBindingStore, FileMachineDaemonStateStore, FileMachineSyncRegistryStore,
+    FileProvenanceLog, FileRepoSyncConfigStore, FileRuntimeStatusStore, FileServerProfileStore,
+    HttpTransport, ProjectorHome, RuntimeStatus, StoredEvent, SyncIssueDisposition,
+    SyncLoopOptions, SyncRunner, Transport, derive_sync_targets,
 };
 
 #[path = "local_bootstrap/binding_support.rs"]

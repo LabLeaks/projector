@@ -4,7 +4,6 @@ Owns repo-runtime refresh and watch-root derivation for the machine-global daemo
 */
 // @fileimplements PROJECTOR.RUNTIME.MACHINE_DAEMON_REPOS
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::io;
 use std::path::PathBuf;
 
@@ -19,14 +18,7 @@ pub(super) fn refresh_repo_runtimes(
     home: &ProjectorHome,
     runtimes: &mut BTreeMap<PathBuf, RepoRuntime>,
 ) -> Result<(), io::Error> {
-    let mut registry = repo_registry_store.load()?;
-    let original_repo_count = registry.repos.len();
-    registry
-        .repos
-        .retain(|repo| !repo_root_is_missing(&repo.repo_root));
-    if registry.repos.len() != original_repo_count {
-        repo_registry_store.save(&registry)?;
-    }
+    let registry = repo_registry_store.load()?;
     let wanted_roots = registry
         .repos
         .iter()
@@ -57,12 +49,6 @@ pub(super) fn refresh_repo_runtimes(
     Ok(())
 }
 
-fn repo_root_is_missing(repo_root: &PathBuf) -> bool {
-    fs::metadata(repo_root)
-        .map(|_| false)
-        .unwrap_or_else(|err| err.kind() == io::ErrorKind::NotFound)
-}
-
 pub(super) fn watched_mounts(sync_targets: &[SyncEntryTarget]) -> Vec<WatchedMount> {
     let mut mounts = sync_targets
         .iter()
@@ -76,4 +62,44 @@ pub(super) fn watched_mounts(sync_targets: &[SyncEntryTarget]) -> Vec<WatchedMou
         left.absolute_path == right.absolute_path && left.kind == right.kind
     });
     mounts
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use crate::global_state::{MachineSyncRegistry, RegisteredRepo};
+    use crate::machine_daemon::RepoRuntime;
+    use crate::test_support::temp_projector_home;
+    use crate::{FileMachineSyncRegistryStore, ProjectorHome};
+
+    use super::refresh_repo_runtimes;
+
+    #[test]
+    fn refresh_repo_runtimes_keeps_missing_repos_registered() {
+        let home_path = temp_projector_home("machine-daemon-missing-repo");
+        let home = ProjectorHome::new(&home_path);
+        let registry_store = FileMachineSyncRegistryStore::new(home.clone());
+        let missing_repo = home_path.join("missing-repo");
+        registry_store
+            .save(&MachineSyncRegistry {
+                repos: vec![RegisteredRepo {
+                    repo_root: missing_repo.clone(),
+                    entry_count: 1,
+                    server_profiles: vec!["homebox".to_owned()],
+                    updated_at_ms: 1,
+                }],
+            })
+            .expect("save registry");
+        let mut runtimes = BTreeMap::<PathBuf, RepoRuntime>::new();
+
+        refresh_repo_runtimes(&registry_store, &home, &mut runtimes).expect("refresh runtimes");
+
+        assert!(runtimes.is_empty());
+        assert_eq!(
+            registry_store.load().expect("load registry").repos[0].repo_root,
+            missing_repo
+        );
+    }
 }

@@ -27,6 +27,8 @@ use crate::cli_support::{
 use crate::connection_cli::resolve_profile_for_action;
 use crate::get_browser::{GetBrowserExit, browse_sync_entries};
 
+const REMOTE_SYNC_ENTRY_LIST_LIMIT: usize = 100;
+
 pub(crate) fn run_add(args: Vec<String>) -> Result<(), Box<dyn Error>> {
     let add_args = parse_add_args(&args)?;
     let repo_root = repo_root()?;
@@ -181,12 +183,12 @@ pub(crate) fn run_get(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         if get_args.sync_entry_id.is_some() || get_args.local_path.is_some() {
             return Err("get --list does not accept a sync-entry id or local path argument".into());
         }
-        let entries = filter_remote_sync_entries(
-            transport.list_sync_entries(100)?,
+        let filtered_entries = filter_remote_sync_entries(
+            transport.list_sync_entries(REMOTE_SYNC_ENTRY_LIST_LIMIT)?,
             get_args.source_repo_filter.as_deref(),
             get_args.remote_path_filter.as_deref(),
         );
-        print_remote_sync_entry_list(&entries);
+        print_remote_sync_entry_list(&filtered_entries);
         return Ok(());
     }
     let entry = match get_args.sync_entry_id.as_deref() {
@@ -195,7 +197,7 @@ pub(crate) fn run_get(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
                 return Err("projector get without an id requires an interactive terminal".into());
             }
-            let entries = transport.list_sync_entries(100)?;
+            let entries = transport.list_sync_entries(REMOTE_SYNC_ENTRY_LIST_LIMIT)?;
             match browse_sync_entries(&entries)? {
                 GetBrowserExit::Selected(entry) => entry,
                 GetBrowserExit::Cancelled => {
@@ -449,7 +451,8 @@ fn find_remote_sync_entry(
     transport: &HttpTransport,
     sync_entry_id: &str,
 ) -> Result<SyncEntrySummary, Box<dyn Error>> {
-    let entries = transport.list_sync_entries(100)?;
+    let entries = transport.list_sync_entries(REMOTE_SYNC_ENTRY_LIST_LIMIT)?;
+    let limit_reached = entries.len() >= REMOTE_SYNC_ENTRY_LIST_LIMIT;
     if let Some(entry) = entries
         .into_iter()
         .find(|entry| entry.sync_entry_id == sync_entry_id)
@@ -468,39 +471,73 @@ fn find_remote_sync_entry(
             "remote sync entry {sync_entry_id} was not found; run `projector get --list` to discover available sync-entry ids"
         ),
     };
+    let message = if limit_reached {
+        format!(
+            "{message}; searched first {REMOTE_SYNC_ENTRY_LIST_LIMIT} remote entries, so results may be truncated"
+        )
+    } else {
+        message
+    };
     Err(message.into())
+}
+
+#[derive(Debug, PartialEq)]
+struct FilteredRemoteSyncEntries {
+    entries: Vec<SyncEntrySummary>,
+    excluded_missing_source_repo_count: usize,
+    remote_entry_limit_reached: bool,
 }
 
 fn filter_remote_sync_entries(
     entries: Vec<SyncEntrySummary>,
     source_repo_filter: Option<&str>,
     remote_path_filter: Option<&str>,
-) -> Vec<SyncEntrySummary> {
+) -> FilteredRemoteSyncEntries {
     let source_repo_filter = source_repo_filter.map(|value| value.to_ascii_lowercase());
     let remote_path_filter = remote_path_filter.map(|value| value.to_ascii_lowercase());
-    entries
+    let remote_entry_limit_reached = entries.len() >= REMOTE_SYNC_ENTRY_LIST_LIMIT;
+    let mut excluded_missing_source_repo_count = 0;
+    let entries = entries
         .into_iter()
-        .filter(|entry| {
-            source_repo_filter.as_ref().is_none_or(|needle| {
-                entry
-                    .source_repo_name
-                    .as_deref()
-                    .is_some_and(|value| value.to_ascii_lowercase().contains(needle))
-            })
+        .filter(|entry| match source_repo_filter.as_ref() {
+            Some(needle) => match entry.source_repo_name.as_deref() {
+                Some(value) => value.to_ascii_lowercase().contains(needle),
+                None => {
+                    excluded_missing_source_repo_count += 1;
+                    false
+                }
+            },
+            None => true,
         })
         .filter(|entry| {
             remote_path_filter
                 .as_ref()
                 .is_none_or(|needle| entry.remote_path.to_ascii_lowercase().contains(needle))
         })
-        .collect()
+        .collect();
+    FilteredRemoteSyncEntries {
+        entries,
+        excluded_missing_source_repo_count,
+        remote_entry_limit_reached,
+    }
 }
 
-fn print_remote_sync_entry_list(entries: &[SyncEntrySummary]) {
-    println!("remote_sync_entry_count: {}", entries.len());
-    for entry in entries {
+fn print_remote_sync_entry_list(filtered: &FilteredRemoteSyncEntries) {
+    println!("remote_sync_entry_count: {}", filtered.entries.len());
+    if filtered.remote_entry_limit_reached {
         println!(
-            "remote_sync_entry: id={} workspace_id={} remote_path={} kind={} source_repo={} last_updated_ms={}",
+            "remote_sync_entry_list_warning: searched_entry_limit={REMOTE_SYNC_ENTRY_LIST_LIMIT} results_may_be_truncated=true"
+        );
+    }
+    if filtered.excluded_missing_source_repo_count > 0 {
+        println!(
+            "remote_sync_entry_filter_warning: excluded_missing_source_repo_count={}",
+            filtered.excluded_missing_source_repo_count
+        );
+    }
+    for entry in &filtered.entries {
+        println!(
+            "remote_sync_entry: sync_entry_id={} workspace_id={} remote_path={} kind={} source_repo={} last_updated_ms={}",
             entry.sync_entry_id,
             entry.workspace_id,
             entry.remote_path,
@@ -513,7 +550,7 @@ fn print_remote_sync_entry_list(entries: &[SyncEntrySummary]) {
         );
         if let Some(preview) = entry.preview.as_deref() {
             println!(
-                "remote_sync_entry_preview: id={} preview={}",
+                "remote_sync_entry_preview: sync_entry_id={} preview={}",
                 entry.sync_entry_id, preview
             );
         }
@@ -894,6 +931,7 @@ mod tests {
                 sample_entry("entry-a", "_project", Some("special")),
                 sample_entry("entry-b", "AGENTS.md", Some("projector")),
                 sample_entry("entry-c", "_project/archive", Some("special-mirror")),
+                sample_entry("entry-d", "_project/mystery", None),
             ],
             Some("special"),
             Some("_project"),
@@ -901,10 +939,13 @@ mod tests {
 
         assert_eq!(
             filtered
+                .entries
                 .into_iter()
                 .map(|entry| entry.sync_entry_id)
                 .collect::<Vec<_>>(),
             vec!["entry-a".to_owned(), "entry-c".to_owned()]
         );
+        assert_eq!(filtered.excluded_missing_source_repo_count, 1);
+        assert!(!filtered.remote_entry_limit_reached);
     }
 }

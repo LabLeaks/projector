@@ -207,5 +207,9 @@ pub(crate) fn merged_test_envs(repo_root: &Path, envs: &[(&str, &str)]) -> Vec<(
 }
 
 fn is_legacy_sync_command(args: &[&str]) -> bool {
-    args.first() == Some(&"sync") && !matches!(args.get(1), Some(&"start" | &"stop" | &"status"))
+    args.first() == Some(&"sync")
+        && !matches!(
+            args.get(1),
+            Some(&"start" | &"stop" | &"status" | &"--help" | &"-h")
+        )
 }
