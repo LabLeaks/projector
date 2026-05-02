@@ -103,7 +103,7 @@ It is not a general-purpose repo file sync system.
 
 ## Install
 
-The intended local install surface for the current `0.2.2` release is the `projector` CLI:
+The intended local install surface for the current `0.2.3` release is the `projector` CLI:
 
 ```sh
 brew install LabLeaks/homebrew-tap/projector

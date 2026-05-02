@@ -62,6 +62,9 @@ When materialized text files contain projector conflict markers, `projector stat
 @spec PROJECTOR.CLI.STATUS.REPORTS_SYNC_REGISTRATION
 `projector status` reports whether the current repo is registered for background syncing with the machine-global daemon.
 
+@spec PROJECTOR.CLI.STATUS.FOLLOWS_MOVED_REPO_REGISTRATION
+When a synced repo directory moves on disk with its `.projector/` metadata intact, `projector status` from the new path updates the machine-global repo registry to the new repo root instead of requiring a manual stop/start dance.
+
 @spec PROJECTOR.CLI.LOG.RENDERS_LOCAL_EVENTS
 `projector log` renders the local projector event log when local bootstrap events exist.
 

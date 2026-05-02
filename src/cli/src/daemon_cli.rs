@@ -5,8 +5,6 @@ Owns machine-daemon lifecycle commands and the internal daemon process entrypoin
 // @fileimplements PROJECTOR.EDGE.DAEMON_CLI
 use std::env;
 use std::error::Error;
-use std::fs;
-use std::path::Path;
 use std::process::{self, Command};
 use std::thread;
 use std::time::Duration;
@@ -163,11 +161,7 @@ fn run_stop_all() -> Result<(), Box<dyn Error>> {
 pub(crate) fn current_repo_syncing(home: &ProjectorHome) -> Result<bool, Box<dyn Error>> {
     let cwd = env::current_dir()?;
     let repo_root = discover_repo_root(&cwd);
-    let registry = FileMachineSyncRegistryStore::new(home.clone()).load()?;
-    Ok(registry
-        .repos
-        .iter()
-        .any(|repo| same_repo_root(&repo.repo_root, &repo_root)))
+    Ok(FileMachineSyncRegistryStore::new(home.clone()).repo_is_registered(&repo_root)?)
 }
 
 fn print_current_repo_sync_state(home: &ProjectorHome) -> Result<(), Box<dyn Error>> {
@@ -181,14 +175,4 @@ fn print_current_repo_sync_state(home: &ProjectorHome) -> Result<(), Box<dyn Err
         Err(_) => println!("repo_sync_entry_count: unknown"),
     }
     Ok(())
-}
-
-fn same_repo_root(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-    match (fs::canonicalize(left), fs::canonicalize(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
 }

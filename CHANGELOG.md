@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3
+
+`0.2.3` is a fast dogfood patch for repo moves.
+
+### Highlights
+
+- Added stable repo identity metadata under `.projector/` so machine-global sync registration can follow a repo when its directory moves on disk.
+- Made `projector status` reconcile a moved synced repo to its new absolute root, avoiding the manual `stop`/`start` dance after moving a checkout.
+
 ## 0.2.2
 
 `0.2.2` is a dogfood hardening release for sync-entry recovery, diagnostics, and local filesystem move handling.

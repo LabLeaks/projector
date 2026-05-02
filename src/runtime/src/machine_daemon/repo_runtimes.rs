@@ -86,6 +86,7 @@ mod tests {
             .save(&MachineSyncRegistry {
                 repos: vec![RegisteredRepo {
                     repo_root: missing_repo.clone(),
+                    repo_identity: Some("repo-missing".to_owned()),
                     entry_count: 1,
                     server_profiles: vec!["homebox".to_owned()],
                     updated_at_ms: 1,

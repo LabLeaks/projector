@@ -163,6 +163,56 @@ fn status_reports_current_repo_sync_registration() {
     assert!(status.contains("repo_syncing: true"));
 }
 
+// @verifies PROJECTOR.CLI.STATUS.FOLLOWS_MOVED_REPO_REGISTRATION
+#[test]
+fn status_follows_moved_repo_registration_without_stop_start() {
+    let old_repo = temp_repo("status-moved-repo-old");
+    let new_repo = old_repo.with_file_name(format!(
+        "{}-new",
+        old_repo
+            .file_name()
+            .expect("old repo has filename")
+            .to_string_lossy()
+    ));
+    let projector_home = temp_projector_home("status-moved-repo");
+    let projector_home_str = projector_home.to_str().expect("projector home utf8");
+    let config = RepoSyncConfig {
+        entries: vec![RepoSyncEntry {
+            entry_id: "entry-private".to_owned(),
+            workspace_id: WorkspaceId::new("ws-private"),
+            actor_id: ActorId::new("actor-private"),
+            server_profile_id: "homebox".to_owned(),
+            local_relative_path: PathBuf::from("private"),
+            remote_relative_path: PathBuf::from("private"),
+            kind: SyncEntryKind::Directory,
+        }],
+    };
+    FileRepoSyncConfigStore::new(&old_repo)
+        .save(&config)
+        .expect("save sync config");
+    let registry_store = FileMachineSyncRegistryStore::new(ProjectorHome::new(&projector_home));
+    registry_store
+        .sync_repo(&old_repo, &config)
+        .expect("register old repo root");
+
+    fs::rename(&old_repo, &new_repo).expect("move repo root");
+    let status = run_projector_with_env(
+        &new_repo,
+        &["status"],
+        &[("PROJECTOR_HOME", projector_home_str)],
+    );
+    let canonical_new_repo = fs::canonicalize(&new_repo).expect("canonical moved repo");
+
+    assert!(status.contains("repo_syncing: true"));
+    assert!(
+        status.contains(&format!("repo_root: {}", canonical_new_repo.display())),
+        "{status}"
+    );
+    let registry = registry_store.load().expect("load registry");
+    assert_eq!(registry.repos.len(), 1);
+    assert_eq!(registry.repos[0].repo_root, canonical_new_repo);
+}
+
 // @verifies PROJECTOR.CLI.STOP.PAUSES_CURRENT_REPO
 #[test]
 fn stop_pauses_current_repo_without_stopping_machine_daemon() {
